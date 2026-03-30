@@ -143,16 +143,13 @@ export const addTextElement = ({
   text.set("id", element.id);
   text.set("zIndex", index);
 
-  // Disable unwanted control points (text is not resizable on canvas)
+  // Enable corner resize (uniform scale) + rotation; disable edge handles
   text.controls.mt = disabledControl;
   text.controls.mb = disabledControl;
   text.controls.ml = disabledControl;
   text.controls.mr = disabledControl;
-  text.controls.bl = disabledControl;
-  text.controls.br = disabledControl;
-  text.controls.tl = disabledControl;
-  text.controls.tr = disabledControl;
   text.controls.mtr = rotateControl;
+  text.set("lockUniScaling", true);
 
   canvas.add(text);
   return text;
@@ -340,16 +337,13 @@ export const addCaptionElement = ({
   caption.set("zIndex", index);
   caption.set("lockUniScaling", lockAspectRatio);
 
-  // Disable unwanted control points
+  // Enable corner resize (uniform scale); disable edge handles and rotation
   caption.controls.mt = disabledControl;
   caption.controls.mb = disabledControl;
   caption.controls.ml = disabledControl;
   caption.controls.mr = disabledControl;
-  caption.controls.bl = disabledControl;
-  caption.controls.br = disabledControl;
-  caption.controls.tl = disabledControl;
-  caption.controls.tr = disabledControl;
   caption.controls.mtr = disabledControl;
+  caption.set("lockUniScaling", true);
 
   canvas.add(caption);
   return caption;

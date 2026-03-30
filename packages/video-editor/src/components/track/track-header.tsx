@@ -1,6 +1,6 @@
 import React from "react";
 import { Track } from "@twick/timeline";
-import { GripVertical, Lock } from "lucide-react";
+import { GripVertical, Lock, Unlock } from "lucide-react";
 import "../../styles/timeline.css";
 
 interface TrackHeaderProps {
@@ -20,27 +20,40 @@ const TrackHeader = ({
   onDrop,
   onSelect,
 }: TrackHeaderProps) => {
+  const isLocked = (track.getProps() as any)?.locked === true;
+
+  const toggleLock = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const props = track.getProps() ?? {};
+    track.setProps({ ...props, locked: !isLocked });
+    // Force re-render by triggering a click on the header
+    onSelect(track, e);
+  };
+
   return (
     <div
       className={`twick-track-header ${
         selectedIds.has(track.getId())
           ? "twick-track-header-selected"
           : "twick-track-header-default"
-      }`}
-      draggable
+      } ${isLocked ? "twick-track-header-locked" : ""}`}
+      draggable={!isLocked}
       onClick={(e) => onSelect(track, e)}
-      onDragStart={(e) => onDragStart(e, track)}
+      onDragStart={(e) => !isLocked && onDragStart(e, track)}
       onDragOver={onDragOver}
       onDrop={(e) => onDrop(e, track)}
     >
-      {track?.getType() === "scene" ? (
-        <Lock className="twick-track-header-lock" />
-      ) : null}
-
       <div className="twick-track-header-content">
         <div className="twick-track-header-grip">
           <GripVertical size={14} />
         </div>
+        <button
+          className="twick-track-lock-btn"
+          onClick={toggleLock}
+          title={isLocked ? "Unlock track" : "Lock track"}
+        >
+          {isLocked ? <Lock size={12} /> : <Unlock size={12} />}
+        </button>
       </div>
     </div>
   );

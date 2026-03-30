@@ -248,9 +248,23 @@ export const useTwickCanvas = ({
     target.canvas?.requestRenderAll();
   };
 
-  /** Clear guides when object is released */
-  const handleObjectMoved = () => {
+  /** Clear guides + convert text scale to fontSize on release */
+  const handleObjectMoved = (event: any) => {
     guidelinesRef.current = { vertical: false, horizontal: false };
+
+    // Convert uniform scale to fontSize for text/caption elements
+    const target = event?.target;
+    if (target && (target.type === "textbox" || target.type === "text")) {
+      const scaleX = target.scaleX ?? 1;
+      if (scaleX !== 1) {
+        const newFontSize = Math.round((target.fontSize ?? 20) * scaleX);
+        target.set("fontSize", Math.max(8, Math.min(120, newFontSize)));
+        target.set("scaleX", 1);
+        target.set("scaleY", 1);
+        target.setCoords();
+      }
+    }
+
     twickCanvasRef.current?.requestRenderAll();
   };
 

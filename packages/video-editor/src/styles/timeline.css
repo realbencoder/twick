@@ -188,14 +188,28 @@
   border: 1px solid #404040;
 }
 
-.twick-track-header-lock {
-  position: absolute;
-  top: 14px;
-  right: 2px;
-  width: 16px;
-  height: 16px;
-  z-index: 20;
-  color: #333;
+.twick-track-header-locked {
+  opacity: 0.5;
+}
+
+.twick-track-lock-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  color: #666;
+  margin-left: auto;
+  border-radius: 3px;
+}
+.twick-track-lock-btn:hover {
+  color: #fff;
+  background: rgba(255,255,255,0.1);
+}
+.twick-track-header-locked .twick-track-lock-btn {
+  color: #f97316;
 }
 
 .twick-track-header-content {

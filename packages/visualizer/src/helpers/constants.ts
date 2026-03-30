@@ -226,7 +226,7 @@ export const CAPTION_STYLE: Record<string, CaptionStyle> = {
 };
 
 export const DEFAULT_CAPTION_COLORS = {
-  text: "#000000",
+  text: "#ffffff",
   bgColor: "#444444",
 };
 
