@@ -56,7 +56,7 @@ export const INITIAL_TIMELINE_DATA = {
           s: 0,
           e: 5,
           props: {
-            text: "Twick SDK",
+            text: "Your text here",
             fill: "#FFFFFF",
           },
         },

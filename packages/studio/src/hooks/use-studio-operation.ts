@@ -76,7 +76,7 @@ const useStudioOperation = (studioConfig?: StudioConfig) => {
         },
       });
     } else {
-        alert("Export video not supported in demo mode");
+        console.warn("Export video service not configured");
     }
   };
 

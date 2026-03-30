@@ -402,7 +402,7 @@ export function CaptionPropPanel({
 
   return (
     <div className="panel-container">
-      {/* Caption Style */}
+      {/* Subtitle Style */}
       <div className="panel-section">
         <div className="checkbox-control">
           <label className="checkbox-label">
@@ -418,7 +418,7 @@ export function CaptionPropPanel({
       </div>
 
       <div className="panel-section">
-        <label className="label-dark">Caption Style</label>
+        <label className="label-dark">Subtitle Style</label>
         <select
           value={capStyle.value}
           onChange={(e) => {
@@ -540,6 +540,51 @@ export function CaptionPropPanel({
           )}
           {currentColorMeta.usedColors.map((key) => renderColorControl(key))}
         </div>
+      </div>
+
+      {/* Apply to all subtitles */}
+      <div className="panel-section">
+        <button
+          className="btn-primary w-full"
+          onClick={() => {
+            if (!track || !(selectedElement instanceof CaptionElement)) return;
+            // Get current caption's resolved style and push to track defaults
+            const captionProps = (selectedElement as CaptionElement).getProps() ?? {};
+            const currentStyle: Record<string, unknown> = {};
+            const styleKeys = [
+              "capStyle", "fontSize", "fontFamily", "colors",
+              "useHighlightOverride", "useOutlineOverride", "x", "y",
+            ];
+            for (const key of styleKeys) {
+              if ((captionProps as any)[key] !== undefined) {
+                currentStyle[key] = (captionProps as any)[key];
+              }
+            }
+            // Also include resolved font/colors from local state
+            currentStyle.fontSize = fontSize;
+            currentStyle.fontFamily = fontFamily;
+            currentStyle.colors = getEffectiveColors({
+              nextColors: colors,
+              highlightEnabled: useHighlight,
+              outlineEnabled: useOutline,
+            });
+            currentStyle.capStyle = capStyle.value;
+            // Update track defaults
+            track.setProps({ ...trackProps, ...currentStyle });
+            // Reset all captions to use track defaults
+            const allCaptions = track.getElements();
+            const friend = track.createFriend();
+            allCaptions.forEach((el: any) => {
+              if (el instanceof CaptionElement) {
+                const p = el.getProps() ?? {};
+                el.setProps({ ...(p as any), useTrackDefaults: true });
+                friend.updateElement(el);
+              }
+            });
+          }}
+        >
+          Apply style to all subtitles
+        </button>
       </div>
     </div>
   );

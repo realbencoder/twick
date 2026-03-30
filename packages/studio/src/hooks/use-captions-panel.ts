@@ -46,7 +46,7 @@ export const useCaptionsPanel = () => {
 
   const checkCaptionsTrack = () => {
     if (!captionsTrack.current) {
-      captionsTrack.current = editor.addTrack("Caption", "caption");
+      captionsTrack.current = editor.addTrack("Subtitles", "caption");
       const props: Record<string, any> = {
         capStyle: CAPTION_STYLE.WORD_BG_HIGHLIGHT,
         ...CAPTION_PROPS[CAPTION_STYLE.WORD_BG_HIGHLIGHT],

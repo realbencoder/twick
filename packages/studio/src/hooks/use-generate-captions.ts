@@ -28,7 +28,7 @@ const useGenerateCaptions = (studioConfig?: StudioConfig) => {
       );
       return reqId;
     }
-    alert("Generate captions not supported in demo mode");
+    console.warn("Subtitle generation service not configured");
     return null;
   };
 

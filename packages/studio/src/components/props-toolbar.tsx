@@ -96,18 +96,18 @@ const propsCategories: Map<string, ToolCategory> = new Map([
     "caption-style",
     {
       id: "caption-style",
-      name: "Caption Style",
+      name: "Subtitle Style",
       icon: "MessageSquare",
-      description: "Caption Style",
+      description: "Subtitle Style",
     },
   ],
   [
     "generate-captions",
     {
       id: "generate-captions",
-      name: "Generate Captions",
+      name: "Generate Subtitles",
       icon: "Caption",
-      description: "Generate Captions",
+      description: "Generate Subtitles",
     },
   ],
 ]);

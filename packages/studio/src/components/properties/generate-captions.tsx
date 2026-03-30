@@ -232,11 +232,11 @@ export function GenerateCaptionsPanel({
           </select>
         </div>
       )}
-      {/* Caption length selection */}
+      {/* Subtitle length selection */}
       {!isLoading && containsAudio === true && (
         <div className="panel-section">
           <label className="label-dark" htmlFor="caption-phrase-length">
-            Caption length
+            Subtitle length
           </label>
           <select
             id="caption-phrase-length"
