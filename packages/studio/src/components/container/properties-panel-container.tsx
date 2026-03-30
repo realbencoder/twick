@@ -197,16 +197,7 @@ export function PropertiesPanelContainer({
                       />
                     )}
 
-                    {/* Generate Captions – video only */}
-                    {isVideo && (
-                      <GenerateCaptionsPanel
-                        selectedElement={selectedElement}
-                        addCaptionsToTimeline={addCaptionsToTimeline}
-                        onGenerateCaptions={onGenerateCaptions}
-                        getCaptionstatus={getCaptionstatus}
-                        pollingIntervalMs={pollingIntervalMs}
-                      />
-                    )}
+                    {/* Generate subtitles is handled by the host app's header button */}
                   </>
                 );
               })()}
