@@ -16,7 +16,6 @@ import {
 } from "@twick/timeline";
 import { CaptionPropPanel } from "../properties/caption-prop";
 import { PlaybackPropsPanel } from "../properties/playback-props";
-import { GenerateCaptionsPanel } from "../properties/generate-captions.tsx";
 import { TextPropsPanel } from "../properties/text-props";
 import { AnnotationStylePanel } from "../properties/annotation-style-panel";
 import { ICaptionGenerationPollingResponse, CaptionEntry } from "../../types";
