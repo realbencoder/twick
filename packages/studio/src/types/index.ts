@@ -140,6 +140,8 @@ export interface ProjectTemplate {
 }
 
 export interface StudioConfig extends VideoEditorConfig {
+  /** Hide the built-in studio header bar. Useful when embedding in an app with its own header. */
+  hideHeader?: boolean;
   /** Canvas behavior options (e.g. enableShiftAxisLock). Same as editorConfig.canvasConfig in TwickEditor. */
   canvasConfig?: CanvasConfig;
   saveProject?: (project: ProjectJSON, fileName: string) => Promise<Result>;

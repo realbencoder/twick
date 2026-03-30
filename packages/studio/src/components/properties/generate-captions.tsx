@@ -84,7 +84,7 @@ export function GenerateCaptionsPanel({
           stopPolling();
           setPollingStatus("error");
           setIsGenerating(false);
-          setErrorMessage(response.error || "Failed to generate captions");
+          setErrorMessage(response.error || "Failed to generate subtitles");
           console.error("Error generating captions:", response.error);
         }
       } catch (error) {
@@ -169,7 +169,7 @@ export function GenerateCaptionsPanel({
 
   return (
     <div className="panel-container">
-      <div className="panel-title">Generate Captions Panel</div>
+      <div className="panel-title">Generate Subtitles</div>
       
       {/* Loading State */}
       {isLoading && (
@@ -201,7 +201,7 @@ export function GenerateCaptionsPanel({
           <div className="empty-state">
             <div className="empty-state-content">
               <Volume2 className="empty-state-icon" />
-              <p className="empty-state-text">Audio detected! You can now generate captions</p>
+              <p className="empty-state-text">Audio detected! You can now generate subtitles</p>
             </div>
           </div>
         </div>
@@ -259,7 +259,7 @@ export function GenerateCaptionsPanel({
           <div className="empty-state">
             <div className="empty-state-content">
               <Loader2 className="empty-state-icon animate-spin" />
-              <p className="empty-state-text">Generating captions... Please wait</p>
+              <p className="empty-state-text">Generating subtitles... Please wait</p>
             </div>
           </div>
         </div>
@@ -271,7 +271,7 @@ export function GenerateCaptionsPanel({
           <div className="empty-state">
             <div className="empty-state-content">
               <CheckCircle2 className="empty-state-icon" color="var(--color-green-500)" />
-              <p className="empty-state-text">Captions generated successfully!</p>
+              <p className="empty-state-text">Subtitles generated successfully!</p>
             </div>
           </div>
         </div>
@@ -283,7 +283,7 @@ export function GenerateCaptionsPanel({
           <div className="empty-state">
             <div className="empty-state-content">
               <XCircle className="empty-state-icon" color="var(--color-red-500)" />
-              <p className="empty-state-text">{errorMessage || "Failed to generate captions"}</p>
+              <p className="empty-state-text">{errorMessage || "Failed to generate subtitles"}</p>
             </div>
           </div>
         </div>
@@ -297,7 +297,7 @@ export function GenerateCaptionsPanel({
             disabled={!containsAudio || isGenerating}
             className="btn-primary w-full"
           >
-            {isGenerating ? "Generating..." : "Generate Captions"}
+            {isGenerating ? "Generating..." : "Generate Subtitles"}
           </button>
         </div>
       )}

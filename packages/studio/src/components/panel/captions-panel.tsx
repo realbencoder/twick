@@ -63,17 +63,17 @@ export function CaptionsPanel({
     <div className="panel-container captions-panel">
       {/* Header */}
       <div className="captions-panel-header">
-        <h3 className="panel-title">Captions</h3>
+        <h3 className="panel-title">Subtitles</h3>
         <div className="captions-panel-header-meta">
           {captions.length === 0 ? (
-            <span className="captions-panel-count">No captions yet</span>
+            <span className="captions-panel-count">No subtitles yet</span>
           ) : null}
           <button
             onClick={addCaption}
             className="btn-primary captions-panel-add-button"
-            title="Add caption"
+            title="Add subtitle"
           >
-            Add caption
+            Add subtitle
           </button>
         </div>
       </div>
@@ -81,16 +81,16 @@ export function CaptionsPanel({
       {/* Caption list */}
       {captions.length === 0 ? (
         <div className="panel-section captions-panel-empty">
-          <p className="captions-panel-empty-title">Start your first caption</p>
+          <p className="captions-panel-empty-title">Start your first subtitle</p>
           <p className="captions-panel-empty-subtitle">
-            Use the button above to add the first caption block for the active track.
+            Use the button above to add the first subtitle block for the active track.
           </p>
           <button
             onClick={addCaption}
             className="btn-primary captions-panel-empty-button"
             title="Add first caption"
           >
-            Add caption
+            Add subtitle
           </button>
         </div>
       ) : (

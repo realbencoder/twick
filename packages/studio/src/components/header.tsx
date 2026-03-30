@@ -17,7 +17,7 @@
  */
 
 import type { Size } from "@twick/timeline";
-import { Save, Download, Clapperboard, File, Plus, RectangleVertical, RectangleHorizontal } from "lucide-react";
+import { Save, Download, File, Plus, RectangleVertical, RectangleHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface StudioHeaderProps {
@@ -75,11 +75,6 @@ export const StudioHeader = ({
   return (
     <header className="header">
       <div className="flex-container">
-        <Clapperboard className="icon-lg accent-purple" />
-        <h1 className="text-gradient">
-          Twick Studio
-        </h1>
-        <div className="header-separator"></div>
         <div className="flex-container" style={{ gap: "0.5rem" }}>
           <span className="text-sm opacity-80">Orientation</span>
           <button
@@ -88,7 +83,6 @@ export const StudioHeader = ({
             onClick={() => handleOrientationChange("vertical")}
           >
             <RectangleVertical className="icon-sm" />
-
           </button>
           <button
             className={`btn-ghost ${orientation === "horizontal" ? "btn-primary" : ""}`}
@@ -96,7 +90,6 @@ export const StudioHeader = ({
             onClick={() => handleOrientationChange("horizontal")}
           >
             <RectangleHorizontal className="icon-sm" />
-
           </button>
         </div>
       </div>
@@ -125,38 +118,6 @@ export const StudioHeader = ({
           <Save className="icon-sm" />
           Save Draft
         </button>
-        {/* <button
-          className="btn-ghost"
-          title="Export captions as SRT"
-          onClick={() => onExportCaptions("srt")}
-        >
-          <Download className="icon-sm" />
-          SRT
-        </button>
-        <button
-          className="btn-ghost"
-          title="Export captions as VTT"
-          onClick={() => onExportCaptions("vtt")}
-        >
-          <Download className="icon-sm" />
-          VTT
-        </button>
-        <button
-          className="btn-ghost"
-          title="Export chapters as YouTube timestamps"
-          onClick={() => onExportChapters("youtube")}
-        >
-          <Download className="icon-sm" />
-          Chapters TXT
-        </button>
-        <button
-          className="btn-ghost"
-          title="Export chapters as JSON"
-          onClick={() => onExportChapters("json")}
-        >
-          <Download className="icon-sm" />
-          Chapters JSON
-        </button> */}
         <button
           className="btn-primary"
           title="Export"

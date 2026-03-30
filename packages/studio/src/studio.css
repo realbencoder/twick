@@ -1469,8 +1469,8 @@ html {
 .studio-container {
   display: flex;
   flex-direction: column;
-  height: 100dvh;
-  width: 100dvw;
+  height: 100%;
+  width: 100%;
   overflow: hidden;
   background: var(--color-neutral-900);
   color: var(--color-gray-100);
@@ -1498,7 +1498,8 @@ html {
   width: 100%;
   min-width: 0; /* allow flex row to shrink below content size */
   max-width: 100%;
-  height: calc(100vh - 56px);
+  flex: 1;
+  min-height: 0;
   background: var(--color-neutral-900);
 }
 

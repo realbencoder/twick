@@ -45,8 +45,7 @@ const defaultToolCategories: ToolCategory[] = [
   { id: 'shape', name: 'Shape', icon: 'Square', description: 'Add lines, arrows, boxes, and circles' },
   // { id: 'chapters', name: 'Chapters', icon: 'File', description: 'Manage chapter markers' },
   // { id: 'script', name: 'Script', icon: 'Type', description: 'Build timeline from a script outline' },
-  { id: 'caption', name: 'Caption', icon: 'MessageSquare', description: 'Manage captions'},
-  { id: 'generate-media', name: 'Generate', icon: 'Wand2', description: 'Generate image or video with AI'},
+  { id: 'caption', name: 'Subtitles', icon: 'MessageSquare', description: 'Manage subtitles'},
 ]
 
 const getIcon = (iconName: string) => {
