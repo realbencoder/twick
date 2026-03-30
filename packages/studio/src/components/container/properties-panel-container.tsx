@@ -18,7 +18,6 @@ import { CaptionPropPanel } from "../properties/caption-prop";
 import { PlaybackPropsPanel } from "../properties/playback-props";
 import { TextPropsPanel } from "../properties/text-props";
 import { AnnotationStylePanel } from "../properties/annotation-style-panel";
-import { ICaptionGenerationPollingResponse, CaptionEntry } from "../../types";
 import { useCallback } from "react";
 
 const DEFAULT_CANVAS_BACKGROUND = "#000000";
@@ -26,20 +25,12 @@ const DEFAULT_CANVAS_BACKGROUND = "#000000";
 interface PropertiesPanelContainerProps {
   selectedElement: TrackElement | null;
   updateElement: (element: TrackElement) => void;
-  addCaptionsToTimeline: (captions: CaptionEntry[]) => void;
-  onGenerateCaptions: (videoElement: VideoElement) => Promise<string | null>;
-  getCaptionstatus: (reqId: string) => Promise<ICaptionGenerationPollingResponse>;
-  pollingIntervalMs: number;
   videoResolution: Size;
 }
 
 export function PropertiesPanelContainer({
   selectedElement,
   updateElement,
-  addCaptionsToTimeline,
-  onGenerateCaptions,
-  getCaptionstatus,
-  pollingIntervalMs,
   videoResolution,
 }: PropertiesPanelContainerProps) {
   const { editor, present } = useTimelineContext();

@@ -27,7 +27,6 @@ import VideoEditor from "@twick/video-editor";
 import { useMemo } from "react";
 import { StudioConfig } from "../types";
 import useStudioOperation from "../hooks/use-studio-operation";
-import { useGenerateCaptions } from "..";
 
 export function TwickStudio({ studioConfig }: { studioConfig?: StudioConfig }) {
   const {
@@ -47,13 +46,6 @@ export function TwickStudio({ studioConfig }: { studioConfig?: StudioConfig }) {
     onExportCaptions,
     onExportChapters,
   } = useStudioOperation(studioConfig);
-
-  const {
-    onGenerateCaptions,
-    addCaptionsToTimeline,
-    getCaptionstatus,
-    pollingIntervalMs,
-  } = useGenerateCaptions(studioConfig);
 
   const twickStudiConfig: StudioConfig = useMemo(
     () => ({
@@ -130,10 +122,6 @@ export function TwickStudio({ studioConfig }: { studioConfig?: StudioConfig }) {
             <PropertiesPanelContainer
               selectedElement={selectedElement}
               updateElement={updateElement}
-              addCaptionsToTimeline={addCaptionsToTimeline}
-              onGenerateCaptions={onGenerateCaptions}
-              getCaptionstatus={getCaptionstatus}
-              pollingIntervalMs={pollingIntervalMs}
               videoResolution={videoResolution}
             />
           </div>
