@@ -153,10 +153,12 @@ export class TimelineEditor {
     backgroundColor,
     metadata,
     updatePlayerData,
+    forceUpdate,
   }: {
     tracks: Track[];
     version?: number;
     updatePlayerData?: boolean;
+    forceUpdate?: boolean;
     watermark?: Watermark;
     backgroundColor?: string;
     metadata?: ProjectMetadata;
@@ -186,6 +188,7 @@ export class TimelineEditor {
       this.context?.setTimelineAction?.(TIMELINE_ACTION.UPDATE_PLAYER_DATA, {
         tracks: serializedTracks,
         version: updatedVersion,
+        forceUpdate: forceUpdate ?? false,
         watermark: watermark != null ? (watermark as any).toJSON?.() : undefined,
         backgroundColor: resolvedBackgroundColor,
         metadata: resolvedMetadata,
@@ -345,7 +348,7 @@ export class TimelineEditor {
   refresh(): void {
     const currentData = this.getTimelineData();
     if (currentData) {
-      this.setTimelineData({ tracks: currentData.tracks, updatePlayerData: true });
+      this.setTimelineData({ tracks: currentData.tracks, updatePlayerData: true, forceUpdate: true });
     }
   }
 
