@@ -134,36 +134,36 @@ export const DEFAULT_TIMELINE_TICK_CONFIGS: TimelineTickConfig[] = [
  * Provides consistent visual distinction between various timeline elements.
  */
 export const DEFAULT_ELEMENT_COLORS: ElementColors = {
-    /** Fragment element color - deep charcoal matching UI background */
+    /** Fragment element color - deep charcoal */
     fragment: "#1A1A1A",
-    /** Video element color - vibrant royal purple */
-    video: "#8B5FBF",
-    /** Caption element color - soft wisteria purple */
-    caption: "#9B8ACE",
-    /** Image element color - warm copper accent */
-    image: "#D4956C",
-    /** Audio element color - deep teal */
-    audio: "#3D8B8B",
-    /** Text element color - medium lavender */
-    text: "#8D74C4",
-    /** Generic element color - muted amethyst */
-    element: "#7B68B8",
-    /** Rectangle element color - deep indigo */
-    rect: "#5B4B99",
-    /** Frame effect color - rich magenta */
-    frameEffect: "#B55B9C",
-    /** Filters color - periwinkle blue */
-    filters: "#7A89D4",
-    /** Transition color - burnished bronze */
-    transition: "#BE8157",
-    /** Animation color - muted emerald */
-    animation: "#4B9B78",
-    /** Icon element color - bright orchid */
-    icon: "#A76CD4",
-    /** Circle element color - deep byzantium */
-    circle: "#703D8B",
-    /** Effect element color - cyan accent for global effects */
-    effect: "#22C3EE",
+    /** Video element color - emerald green */
+    video: "#059669",
+    /** Caption/subtitle element color - amber orange */
+    caption: "#d97706",
+    /** Image element color - sky blue */
+    image: "#0284c7",
+    /** Audio element color - teal */
+    audio: "#0d9488",
+    /** Text element color - violet */
+    text: "#7c3aed",
+    /** Generic element color - stone */
+    element: "#57534e",
+    /** Rectangle element color - indigo */
+    rect: "#4f46e5",
+    /** Frame effect color - rose */
+    frameEffect: "#e11d48",
+    /** Filters color - blue */
+    filters: "#2563eb",
+    /** Transition color - amber */
+    transition: "#d97706",
+    /** Animation color - emerald */
+    animation: "#059669",
+    /** Icon element color - fuchsia */
+    icon: "#c026d3",
+    /** Circle element color - indigo */
+    circle: "#4f46e5",
+    /** Effect element color - cyan */
+    effect: "#06b6d4",
   };
 /**
  * Available text fonts for video editor text elements.
