@@ -144,23 +144,82 @@ export const useTwickCanvas = ({
     }
   };
 
+  // ── Center alignment guides ──
+  const GUIDE_SNAP_THRESHOLD = 5; // pixels
+  const guidelinesRef = useRef<{ vertical: boolean; horizontal: boolean }>({
+    vertical: false,
+    horizontal: false,
+  });
+
+  /**
+   * Draws centering guide lines on the canvas overlay after each render.
+   * Shows a blue dashed line when an element is centered horizontally or vertically.
+   */
+  const drawGuidelines = (canvas: FabricCanvas) => {
+    const ctx = canvas.getTopContext();
+    if (!ctx) return;
+    const { vertical, horizontal } = guidelinesRef.current;
+    if (!vertical && !horizontal) return;
+
+    ctx.save();
+    ctx.strokeStyle = "#3b82f6";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+
+    if (vertical) {
+      const x = canvas.width! / 2;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, canvas.height!);
+      ctx.stroke();
+    }
+    if (horizontal) {
+      const y = canvas.height! / 2;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(canvas.width!, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  };
+
   /**
    * Handles object moving events on the canvas.
-   * When Shift is held (and axis lock is enabled), restricts movement to the
-   * dominant axis based on the initial drag direction.
+   * Snaps to center when close, shows alignment guides, and optionally
+   * locks to dominant axis when Shift is held.
    */
   const handleObjectMoving = (event: any) => {
-    if (!enableShiftAxisLock) return;
     const target: FabricObject | undefined = event?.target;
     const transform = event?.transform;
     const pointerEvent = event?.e as MouseEvent | PointerEvent | undefined;
+    const canvas = twickCanvasRef.current;
 
-    if (!target || !transform || !pointerEvent) {
-      axisLockStateRef.current = null;
+    // ── Center snap + guides (always active) ──
+    if (target && canvas) {
+      const canvasW = canvas.width!;
+      const canvasH = canvas.height!;
+      const objCenterX = target.left! + (target.width! * (target.scaleX ?? 1)) / 2;
+      const objCenterY = target.top! + (target.height! * (target.scaleY ?? 1)) / 2;
+
+      const snapV = Math.abs(objCenterX - canvasW / 2) < GUIDE_SNAP_THRESHOLD;
+      const snapH = Math.abs(objCenterY - canvasH / 2) < GUIDE_SNAP_THRESHOLD;
+
+      guidelinesRef.current = { vertical: snapV, horizontal: snapH };
+
+      if (snapV) {
+        target.left = canvasW / 2 - (target.width! * (target.scaleX ?? 1)) / 2;
+      }
+      if (snapH) {
+        target.top = canvasH / 2 - (target.height! * (target.scaleY ?? 1)) / 2;
+      }
+    }
+
+    // ── Shift axis lock ──
+    if (!enableShiftAxisLock || !target || !transform || !pointerEvent) {
+      if (!enableShiftAxisLock) axisLockStateRef.current = null;
       return;
     }
 
-    // If Shift is not pressed, do not constrain movement.
     if (!pointerEvent.shiftKey) {
       axisLockStateRef.current = null;
       return;
@@ -172,7 +231,6 @@ export const useTwickCanvas = ({
       return;
     }
 
-    // Decide the dominant axis once for the drag operation.
     if (!axisLockStateRef.current) {
       const dx = Math.abs(target.left - original.left);
       const dy = Math.abs(target.top - original.top);
@@ -182,15 +240,24 @@ export const useTwickCanvas = ({
     }
 
     if (axisLockStateRef.current.axis === "x") {
-      // Lock vertical movement.
       target.top = original.top;
     } else {
-      // Lock horizontal movement.
       target.left = original.left;
     }
 
-    // Ensure the canvas reflects the updated coordinates.
     target.canvas?.requestRenderAll();
+  };
+
+  /** Clear guides when object is released */
+  const handleObjectMoved = () => {
+    guidelinesRef.current = { vertical: false, horizontal: false };
+    twickCanvasRef.current?.requestRenderAll();
+  };
+
+  /** Draw guide overlays after each canvas render */
+  const handleAfterRender = () => {
+    const canvas = twickCanvasRef.current;
+    if (canvas) drawGuidelines(canvas);
   };
 
   /**
@@ -264,6 +331,8 @@ export const useTwickCanvas = ({
       twickCanvasRef.current.off("mouse:up", handleMouseUp);
       twickCanvasRef.current.off("text:editing:exited", onTextEdit);
       twickCanvasRef.current.off("object:moving", handleObjectMoving);
+      twickCanvasRef.current.off("object:modified", handleObjectMoved);
+      twickCanvasRef.current.off("after:render", handleAfterRender);
       twickCanvasRef.current.off("selection:created", applyMarqueeSelectionControls);
       twickCanvasRef.current.off("selection:updated", applyMarqueeSelectionControls);
       twickCanvasRef.current.dispose();
@@ -287,6 +356,8 @@ export const useTwickCanvas = ({
     canvas?.on("mouse:up", handleMouseUp);
     canvas?.on("text:editing:exited", onTextEdit);
     canvas?.on("object:moving", handleObjectMoving);
+    canvas?.on("object:modified", handleObjectMoved);
+    canvas?.on("after:render", handleAfterRender);
     canvas?.on("selection:created", applyMarqueeSelectionControls);
     canvas?.on("selection:updated", applyMarqueeSelectionControls);
     canvasResolutionRef.current = canvasSize;
