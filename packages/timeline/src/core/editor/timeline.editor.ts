@@ -422,6 +422,36 @@ export class TimelineEditor {
   }
 
   /**
+   * Remove an element and shift all later elements on ALL tracks to close the gap.
+   * Prevents black frames and keeps audio in sync with video (ripple delete).
+   */
+  rippleRemoveElement(element: TrackElement): boolean {
+    const gapStart = element.getStart();
+    const gapDuration = element.getDuration();
+    const elementId = element.getId();
+
+    const removed = this.removeElement(element);
+    if (!removed || gapDuration <= 0) return removed;
+
+    // Shift all elements that start at or after the gap to close it
+    const currentData = this.getTimelineData();
+    if (currentData) {
+      for (const track of currentData.tracks) {
+        for (const el of track.getElements()) {
+          if (el.getId() === elementId) continue; // skip the removed element
+          if (el.getStart() >= gapStart + gapDuration) {
+            el.setStart(el.getStart() - gapDuration);
+            el.setEnd(el.getEnd() - gapDuration);
+          }
+        }
+      }
+      this.setTimelineData({ tracks: currentData.tracks, updatePlayerData: true, forceUpdate: true });
+    }
+
+    return true;
+  }
+
+  /**
    * Update an element in a specific track using the visitor pattern.
    * @param element The updated element.
    * @returns The updated `TrackElement`.

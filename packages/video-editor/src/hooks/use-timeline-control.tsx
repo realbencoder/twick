@@ -43,7 +43,7 @@ const useTimelineControl = () => {
       if (el instanceof Track) {
         editor.removeTrack(el);
       } else if (el instanceof TrackElement) {
-        editor.removeElement(el);
+        editor.rippleRemoveElement(el);
       }
     }
     setSelectedItem(null);
