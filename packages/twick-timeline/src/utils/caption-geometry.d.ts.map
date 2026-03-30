@@ -1,0 +1,1 @@
+{"version":3,"file":"caption-geometry.d.ts","sourceRoot":"","sources":["../../../src/utils/caption-geometry.ts"],"names":[],"mappings":"AAAA;;;;;GAKG;AAIH,MAAM,WAAW,eAAe;IAC9B;;;OAGG;IACH,SAAS,EAAE,MAAM,CAAC;IAElB;;;;OAIG;IACH,SAAS,EAAE;QACT,GAAG,EAAE,MAAM,CAAC;KACb,CAAC;CACH;AAED;;;;;;;;GAQG;AACH,wBAAgB,sBAAsB,CACpC,QAAQ,EAAE,MAAM,EAChB,YAAY,EAAE,MAAM,GACnB,eAAe,CAwBjB"}

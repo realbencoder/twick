@@ -1,0 +1,1 @@
+{"version":3,"file":"register-editor.d.ts","sourceRoot":"","sources":["../../../src/utils/register-editor.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,cAAc,EAAE,MAAM,gCAAgC,CAAC;AAGhE,eAAO,MAAM,cAAc,6BAAoC,CAAC;AAGhE,OAAO,CAAC,MAAM,CAAC;IACb,UAAU,MAAM;QACd,oBAAoB,EAAE,GAAG,CAAC,MAAM,EAAE,cAAc,CAAC,CAAC;KACnD;CACF"}

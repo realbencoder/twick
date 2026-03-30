@@ -87,7 +87,8 @@ export const addTextElement = ({
       fontStyle,
       fontWeight,
     });
-    const padding = 4;
+    const strokeW = (element.props?.lineWidth || DEFAULT_TEXT_PROPS.lineWidth) * 0.025;
+    const padding = 8 + strokeW * 2;
     width = width + padding * 2;
     if (element.props?.maxWidth) {
       width = Math.min(width, element.props.maxWidth * canvasMetadata.scaleX);
