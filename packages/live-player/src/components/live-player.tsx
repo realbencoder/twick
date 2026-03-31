@@ -284,6 +284,7 @@ export const LivePlayer = ({
         height: "100%",
         justifyContent: "center",
         alignItems: "center",
+        overflow: "hidden",
         ...(containerStyle || {}),
       }}
     >
@@ -292,9 +293,6 @@ export const LivePlayer = ({
         looping={false}
         controls={false}
         currentTime={seekTime}
-        // Note: variables is not passed as a prop to avoid React trying to set it as a property.
-        // Instead, we use setAttribute via setProjectData() which is called in useEffect
-        // and onFirstRender to properly set the variables attribute on the custom element.
         volume={volume}
         quality={quality || 1}
         onTimeUpdate={onCurrentTimeUpdate}
