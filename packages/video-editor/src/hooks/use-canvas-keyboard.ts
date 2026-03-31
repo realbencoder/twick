@@ -63,5 +63,5 @@ export function useCanvasKeyboard({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [enabled, onDelete]);
+  }, [enabled, onDelete, onUndo, onRedo]);
 }

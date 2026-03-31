@@ -35,8 +35,6 @@ const FileInput = ({
           console.error("Error parsing file:", error);
         }
       };
-      console.log("file", file);
-
       if (file.type === "application/json") {
         reader.readAsText(file);
       } else {

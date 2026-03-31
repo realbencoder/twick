@@ -72,7 +72,9 @@ export const useEditorManager = () => {
             if (result) {
               setSelectedItem(element);
             }
-          } catch (error) {}
+          } catch (innerErr) {
+            console.error('Failed to add element to new track:', innerErr);
+          }
         }
       }
     }

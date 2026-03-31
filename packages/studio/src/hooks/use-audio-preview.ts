@@ -27,6 +27,7 @@ export const useAudioPreview = (): AudioPreviewState & AudioPreviewActions => {
 
   const stopPlayback = useCallback(() => {
     if (audioRef.current) {
+      audioRef.current.removeEventListener('ended', stopPlayback);
       audioRef.current.pause();
       audioRef.current = null;
     }

@@ -63,8 +63,12 @@ const useTimelineControl = () => {
    * // Splits the video element at 10.5 seconds
    * ```
    */
-  const splitElement = (element: TrackElement, currentTime: number) => {
-    editor.splitElement(element, currentTime);
+  const splitElement = async (element: TrackElement, currentTime: number) => {
+    const result = await editor.splitElement(element, currentTime);
+    // Select the first piece so timeline doesn't zoom to nothing
+    if (result?.success && result?.firstElement) {
+      setSelectedItem(result.firstElement);
+    }
   };
 
   /**

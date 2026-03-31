@@ -48,7 +48,7 @@ export const CAPTION_STYLE: Record<string, CaptionStyle> = {
   highlight_bg: {
     rect: {
       alignItems: "center",
-      gap: 2,
+      gap: 10,
     },
     word: {
       lineWidth: 0.35,

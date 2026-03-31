@@ -259,7 +259,7 @@ export const LivePlayer = ({
     }
     return () => {
       if (typeof window !== "undefined") {
-        window.addEventListener(
+        window.removeEventListener(
           "twick:playerUpdate",
           handleUpdate as EventListener
         );

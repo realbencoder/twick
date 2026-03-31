@@ -89,21 +89,27 @@ export const useCaptionsPanel = () => {
   };
 
   const deleteCaption = (index: number) => {
-    setCaptions(captions.filter((_, i) => i !== index));
     if (captionsTrack.current) {
-      editor.removeElement(captionsTrack.current.getElements()[index]);
+      // Get element BEFORE updating state to avoid index mismatch
+      const elements = captionsTrack.current.getElements();
+      if (index < elements.length) {
+        editor.rippleRemoveElement(elements[index]);
+      }
     }
+    setCaptions(captions.filter((_, i) => i !== index));
   };
 
   const updateCaption = (index: number, caption: CaptionPanelEntry) => {
-    setCaptions(captions.map((sub, i) => (i === index ? caption : sub)));
     if (captionsTrack.current) {
-      const element = captionsTrack.current.getElements()[
-        index
-      ] as CaptionElement;
-      element.setText(caption.t);
-      editor.updateElement(element);
+      // Get element BEFORE updating state to avoid index mismatch
+      const elements = captionsTrack.current.getElements();
+      if (index < elements.length) {
+        const element = elements[index] as CaptionElement;
+        element.setText(caption.t);
+        editor.updateElement(element);
+      }
     }
+    setCaptions(captions.map((sub, i) => (i === index ? caption : sub)));
   };
 
   return {
