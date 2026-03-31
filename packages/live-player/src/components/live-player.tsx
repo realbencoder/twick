@@ -248,6 +248,13 @@ export const LivePlayer = ({
     if (playerRef.current?.player) {
       playerRef.current.player.togglePlayback(playing);
     }
+    // Force-pause all media elements when stopping (belt-and-suspenders)
+    if (!playing && playerContainerRef.current) {
+      const mediaElements = playerContainerRef.current.querySelectorAll('video, audio');
+      mediaElements.forEach((el) => {
+        try { (el as HTMLMediaElement).pause(); } catch {}
+      });
+    }
   }, [playing]);
 
   useEffect(() => {
