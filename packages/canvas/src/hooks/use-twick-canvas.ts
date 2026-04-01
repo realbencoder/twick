@@ -198,8 +198,15 @@ export const useTwickCanvas = ({
     if (target && canvas) {
       const canvasW = canvas.width!;
       const canvasH = canvas.height!;
-      const objCenterX = target.left! + (target.width! * (target.scaleX ?? 1)) / 2;
-      const objCenterY = target.top! + (target.height! * (target.scaleY ?? 1)) / 2;
+      // Account for originX/originY — if "center", left/top IS the center already
+      const originX = (target as any).originX ?? "left";
+      const originY = (target as any).originY ?? "top";
+      const objCenterX = originX === "center"
+        ? target.left!
+        : target.left! + (target.width! * (target.scaleX ?? 1)) / 2;
+      const objCenterY = originY === "center"
+        ? target.top!
+        : target.top! + (target.height! * (target.scaleY ?? 1)) / 2;
 
       const snapV = Math.abs(objCenterX - canvasW / 2) < GUIDE_SNAP_THRESHOLD;
       const snapH = Math.abs(objCenterY - canvasH / 2) < GUIDE_SNAP_THRESHOLD;
@@ -207,10 +214,14 @@ export const useTwickCanvas = ({
       guidelinesRef.current = { vertical: snapV, horizontal: snapH };
 
       if (snapV) {
-        target.left = canvasW / 2 - (target.width! * (target.scaleX ?? 1)) / 2;
+        target.left = originX === "center"
+          ? canvasW / 2
+          : canvasW / 2 - (target.width! * (target.scaleX ?? 1)) / 2;
       }
       if (snapH) {
-        target.top = canvasH / 2 - (target.height! * (target.scaleY ?? 1)) / 2;
+        target.top = originY === "center"
+          ? canvasH / 2
+          : canvasH / 2 - (target.height! * (target.scaleY ?? 1)) / 2;
       }
     }
 
