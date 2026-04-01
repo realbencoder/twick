@@ -200,6 +200,20 @@ export const LivePlayer = ({
       onFirstRender();
       isFirstRender.current = true;
 
+      // Force the player canvas to match container dimensions on first load.
+      // Without this, the canvas renders at native resolution (e.g. 720x1280)
+      // which overflows the container until CSS layout settles.
+      if (htmlElement) {
+        const canvas = htmlElement.querySelector('canvas');
+        const container = playerContainerRef.current;
+        if (canvas && container) {
+          requestAnimationFrame(() => {
+            canvas.style.width = '100%';
+            canvas.style.height = '100%';
+          });
+        }
+      }
+
       if (onPlayerReady) {
         onPlayerReady(player);
       }
@@ -244,11 +258,24 @@ export const LivePlayer = ({
   }, [projectData, setProjectData, seekTime]);
 
   // Play/pause player based on external prop
+  // Retry if player isn't ready yet (first load race condition)
   useEffect(() => {
-    if (playerRef.current?.player) {
-      playerRef.current.player.togglePlayback(playing);
+    const tryToggle = () => {
+      if (playerRef.current?.player) {
+        playerRef.current.player.togglePlayback(playing);
+        return true;
+      }
+      return false;
+    };
+
+    if (!tryToggle()) {
+      // Player not ready yet — retry after short delay
+      const retryTimer = setTimeout(() => tryToggle(), 500);
+      const retryTimer2 = setTimeout(() => tryToggle(), 1000);
+      return () => { clearTimeout(retryTimer); clearTimeout(retryTimer2); };
     }
-    // Force-pause all media elements when stopping (belt-and-suspenders)
+
+    // Force-pause all media elements when stopping
     if (!playing && playerContainerRef.current) {
       const mediaElements = playerContainerRef.current.querySelectorAll('video, audio');
       mediaElements.forEach((el) => {
