@@ -10,6 +10,7 @@ import {
 import {
   convertToCanvasPosition,
   hexToRgba,
+  measureTextWidth,
 } from "../helpers/canvas.util";
 import {
   CanvasElement,
@@ -79,9 +80,16 @@ export const addTextElement = ({
       width = Math.min(width, element.props.maxWidth * canvasMetadata.scaleX);
     }
   } else {
-    // Default to canvas width minus margins — lets Fabric handle wrapping.
-    // measureTextWidth is unreliable across fonts and doesn't match Fabric's layout.
-    width = canvasMetadata.width - (2 * MARGIN);
+    // Measure text then clamp to reasonable bounds.
+    // Too narrow = text overflows. Too wide (canvas width) = centering guides useless.
+    const textContent = element.props?.text ?? element.t ?? "";
+    const measured = measureTextWidth(textContent, { fontSize, fontFamily, fontStyle, fontWeight });
+    const padding = 20;
+    width = measured + padding * 2;
+    // Clamp: at least 30% of canvas, at most 90% of canvas
+    const minWidth = canvasMetadata.width * 0.3;
+    const maxWidth = canvasMetadata.width * 0.9;
+    width = Math.max(minWidth, Math.min(maxWidth, width));
     if (element.props?.maxWidth) {
       width = Math.min(width, element.props.maxWidth * canvasMetadata.scaleX);
     }
