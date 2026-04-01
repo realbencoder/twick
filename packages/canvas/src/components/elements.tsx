@@ -10,7 +10,6 @@ import {
 import {
   convertToCanvasPosition,
   hexToRgba,
-  measureTextWidth,
 } from "../helpers/canvas.util";
 import {
   CanvasElement,
@@ -80,16 +79,9 @@ export const addTextElement = ({
       width = Math.min(width, element.props.maxWidth * canvasMetadata.scaleX);
     }
   } else {
-    const textContent = element.props?.text ?? element.t ?? "";
-    width = measureTextWidth(textContent, {
-      fontSize,
-      fontFamily,
-      fontStyle,
-      fontWeight,
-    });
-    const strokeW = (element.props?.lineWidth || DEFAULT_TEXT_PROPS.lineWidth) * 0.025;
-    const padding = 8 + strokeW * 2;
-    width = width + padding * 2;
+    // Default to canvas width minus margins — lets Fabric handle wrapping.
+    // measureTextWidth is unreliable across fonts and doesn't match Fabric's layout.
+    width = canvasMetadata.width - (2 * MARGIN);
     if (element.props?.maxWidth) {
       width = Math.min(width, element.props.maxWidth * canvasMetadata.scaleX);
     }
