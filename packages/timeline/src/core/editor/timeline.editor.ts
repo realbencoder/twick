@@ -455,6 +455,11 @@ export class TimelineEditor {
     const elementTrack = this.getTrackById(elementTrackId);
     if (!elementTrack) return false;
     const isVideoTrack = elementTrack.getType() === TRACK_TYPES.VIDEO;
+    // Captions are time-pinned to the audio — deleting ONE caption must NOT ripple-shift the
+    // other captions (bug: deleting a subtitle slid every later subtitle out of sync). A direct
+    // caption delete is a caption-on-caption-track removal; the video-removal caption cascade
+    // (gated on isVideoTrack below) is a different path and stays unaffected.
+    const isCaptionElementDelete = elementTrack.getType() === TRACK_TYPES.CAPTION;
 
     // Remove WITHOUT snapshotting (friend mutation) — the single trailing setTimelineData below
     // is the SOLE undo snapshot for the whole ripple. Previously this.removeElement (here AND in
@@ -508,8 +513,9 @@ export class TimelineEditor {
             this.adjustCaptionWordsForTimeChange(el, elStart, prevEnd);
             continue;
           }
-          // Element starts after the gap — shift left
-          if (elStart >= gapEnd) {
+          // Element starts after the gap — shift left to close it. Skip for a caption-on-caption
+          // delete: captions stay pinned to the audio (leave a gap, like overlay tracks already do).
+          if (elStart >= gapEnd && !isCaptionElementDelete) {
             const prevStart = el.getStart();
             const prevEnd = el.getEnd();
             el.setStart(prevStart - gapDuration);
