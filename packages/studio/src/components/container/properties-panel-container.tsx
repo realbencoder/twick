@@ -42,7 +42,7 @@ export function PropertiesPanelContainer({
   const handleBringForward = useCallback(() => {
     if (!selectedElement || !present?.tracks) return;
     const tracks = present.tracks;
-    const trackIdx = tracks.findIndex((t: any) => t.elements?.some((e: any) => e === selectedElement));
+    const trackIdx = tracks.findIndex((t: any) => t.elements?.some((e: any) => e.id === selectedElement.getId()));
     if (trackIdx > 0) {
       const editorTracks = editor.getTracksByPredicate(() => true);
       if (trackIdx < editorTracks.length) {
@@ -56,7 +56,7 @@ export function PropertiesPanelContainer({
   const handleSendBackward = useCallback(() => {
     if (!selectedElement || !present?.tracks) return;
     const tracks = present.tracks;
-    const trackIdx = tracks.findIndex((t: any) => t.elements?.some((e: any) => e === selectedElement));
+    const trackIdx = tracks.findIndex((t: any) => t.elements?.some((e: any) => e.id === selectedElement.getId()));
     if (trackIdx >= 0 && trackIdx < tracks.length - 1) {
       const editorTracks = editor.getTracksByPredicate(() => true);
       if (trackIdx < editorTracks.length - 1) {

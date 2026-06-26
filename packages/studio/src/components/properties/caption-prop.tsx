@@ -577,9 +577,7 @@ export function CaptionPropPanel({
               outlineEnabled: useOutline,
             });
             currentStyle.capStyle = capStyle.value;
-            // Update track defaults
-            track.setProps({ ...trackProps, ...currentStyle });
-            // Reset all captions to use track defaults
+            // Reset all captions to use track defaults (friend = no per-element undo snapshot)
             const allCaptions = track.getElements();
             const friend = track.createFriend();
             allCaptions.forEach((el: any) => {
@@ -589,6 +587,10 @@ export function CaptionPropPanel({
                 friend.updateElement(el);
               }
             });
+            // Commit the new track defaults — bumps the timeline version, which re-renders
+            // the canvas and fires autosave. (track.setProps + friend.updateElement only mutate
+            // the model and never commit, so before this the click did nothing visible.)
+            editor.updateTrackProps(track.getId(), { ...trackProps, ...currentStyle });
           }}
         >
           Apply style to all subtitles
