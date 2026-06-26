@@ -46,6 +46,12 @@ async function listPublicAssets(params: AssetListParams): Promise<Paginated<Medi
   if (params.provider) searchParams.set("provider", params.provider);
   searchParams.set("page", String(page));
   searchParams.set("pageSize", String(pageSize));
+  // Detect orientation from editor canvas — landscape editors get landscape B-roll
+  const editorContainer = typeof document !== "undefined" ? document.querySelector(".twick-editor-container") : null;
+  if (editorContainer) {
+    const rect = editorContainer.getBoundingClientRect();
+    searchParams.set("orientation", rect.width > rect.height ? "landscape" : "portrait");
+  }
 
   const res = await fetch(`/api/assets/search?${searchParams.toString()}`);
   if (!res.ok) {

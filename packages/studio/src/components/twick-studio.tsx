@@ -36,7 +36,7 @@ export function TwickStudio({ studioConfig }: { studioConfig?: StudioConfig }) {
     addElement,
     updateElement,
   } = useStudioManager();
-  const { editor, present, videoResolution, setVideoResolution } =
+  const { editor, present, videoResolution, setVideoResolution, setSelectedItem } =
     useTimelineContext();
   const {
     onNewProject,
@@ -117,14 +117,24 @@ export function TwickStudio({ studioConfig }: { studioConfig?: StudioConfig }) {
             </div>
           </main>
 
-          {/* Right Panel (Inspector + Props Toolbar) */}
-          <div className="studio-right-panel">
-            <PropertiesPanelContainer
-              selectedElement={selectedElement}
-              updateElement={updateElement}
-              videoResolution={videoResolution}
-            />
-          </div>
+          {/* Right Panel (Inspector + Props Toolbar) — only show when an element is selected */}
+          {selectedElement && (
+            <div className="studio-right-panel">
+              <button
+                onClick={() => setSelectedItem(null)}
+                className="panel-close-btn"
+                title="Close panel"
+                aria-label="Close properties panel"
+              >
+                ✕
+              </button>
+              <PropertiesPanelContainer
+                selectedElement={selectedElement}
+                updateElement={updateElement}
+                videoResolution={videoResolution}
+              />
+            </div>
+          )}
         </div>
       </div>
     </MediaProvider>

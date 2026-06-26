@@ -41,8 +41,8 @@ const defaultToolCategories: ToolCategory[] = [
   { id: 'audio', name: 'Audio', icon: 'Audio', description: 'Add an audio element' },
   { id: 'text', name: 'Text', icon: 'Type', description: 'Add text elements' },
   { id: 'text-style', name: 'Text Style', icon: 'Type', description: 'Apply text style presets' },
-  { id: 'effect', name: 'Effect', icon: 'Wand2', description: 'Apply GL video effects' },
-  { id: 'shape', name: 'Shape', icon: 'Square', description: 'Add lines, arrows, boxes, and circles' },
+  // { id: "effect", name: "Effect", icon: "Wand2", description: "Apply GL video effects" }, // Removed: GL effects don't render in Canvas 2D pipeline
+  // { id: "shape", name: "Shape", icon: "Square", description: "Add lines, arrows, boxes, and circles" }, // Removed: lines/arrows don't render in our pipeline
   // { id: 'chapters', name: 'Chapters', icon: 'File', description: 'Manage chapter markers' },
   // { id: 'script', name: 'Script', icon: 'Type', description: 'Build timeline from a script outline' },
   { id: 'caption', name: 'Subtitles', icon: 'MessageSquare', description: 'Manage subtitles'},

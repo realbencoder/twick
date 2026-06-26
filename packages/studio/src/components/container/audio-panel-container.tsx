@@ -38,7 +38,7 @@ export const AudioPanelContainer = (props: PanelProps) => {
       {activeSource === "user" ? (
         <AudioUserAssetsSection {...props} />
       ) : (
-        <AudioPublicAssetsSection />
+        <AudioPublicAssetsSection {...props} />
       )}
     </>
   );
@@ -102,6 +102,7 @@ function AudioUserAssetsSection(props: PanelProps) {
           <CloudMediaUpload
             uploadApiUrl={props.uploadConfig.uploadApiUrl}
             provider={props.uploadConfig.provider}
+            headers={props.uploadConfig.headers}
             accept="audio/*"
             onSuccess={onCloudUploadSuccess}
             buttonText="Upload audio"
@@ -123,7 +124,40 @@ function AudioUserAssetsSection(props: PanelProps) {
   );
 }
 
-function AudioPublicAssetsSection() {
+function AudioPublicAssetsSection(props: PanelProps) {
+  const { handleSelection } = useMediaPanel(
+    "audio",
+    {
+      selectedElement: props.selectedElement ?? null,
+      addElement: props.addElement!,
+      updateElement: props.updateElement!,
+    },
+    props.videoResolution,
+  );
+  const [proxyingId, setProxyingId] = useState<string | null>(null);
+
+  const handlePublicSelection = async (item: MediaItem, forceAdd?: boolean) => {
+    setProxyingId(item.id);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (props.uploadConfig?.headers) Object.assign(headers, props.uploadConfig.headers);
+      const res = await fetch("/api/assets/proxy", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ url: item.url, type: "audio", name: `pexels-${item.id}.mp3` }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        handleSelection({ ...item, url: data.url }, forceAdd);
+      } else {
+        handleSelection(item, forceAdd);
+      }
+    } catch {
+      handleSelection(item, forceAdd);
+    }
+    setProxyingId(null);
+  };
+
   const assetLibrary = getAssetLibrary();
   const [providerConfigs, setProviderConfigs] = useState<AssetProviderConfig[]>(
     [],
@@ -220,9 +254,9 @@ function AudioPublicAssetsSection() {
         items={publicItems}
         searchQuery={publicSearchQuery}
         onSearchChange={setPublicSearchQuery}
-        onItemSelect={() => { }}
+        onItemSelect={handlePublicSelection}
         onFileUpload={() => { }}
-        isLoading={isPublicLoading}
+        isLoading={isPublicLoading || !!proxyingId}
         acceptFileTypes={[]}
         onUrlAdd={() => { }}
       />

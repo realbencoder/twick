@@ -1,15 +1,39 @@
-import { RectElement, CircleElement, TrackElement } from "@twick/timeline";
-// Dimensions in inspector: Rect and Circle only. Image/Video resize via canvas (dimensions deferred).
+import { RectElement, CircleElement, ImageElement, VideoElement, TrackElement } from "@twick/timeline";
 import type { PropertiesPanelProps } from "../../types";
 import { PropertyRow } from "./property-row";
-import { Ruler } from "lucide-react";
+import { Ruler, ArrowUp, ArrowDown } from "lucide-react";
 import { AccordionItem } from "../shared/accordion-item";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 
-export function ElementProps({ selectedElement, updateElement }: PropertiesPanelProps) {
+export function ElementProps({ selectedElement, updateElement, onBringForward, onSendBackward }: PropertiesPanelProps & { onBringForward?: () => void; onSendBackward?: () => void }) {
   const opacity = selectedElement?.getOpacity() || 1;
   const rotation = selectedElement?.getRotation() || 0;
   const position = selectedElement?.getPosition() || { x: 0, y: 0 };
+
+  // Scale: track via local state for smooth slider interaction
+  const hasFrame = selectedElement instanceof ImageElement || selectedElement instanceof VideoElement;
+  const frame = hasFrame ? (selectedElement as any).getFrame?.() : null;
+  const baseSizeRef = useRef<[number, number] | null>(null);
+  const [scalePercent, setScalePercent] = useState(100);
+
+  // Capture the initial size when element is first selected
+  useEffect(() => {
+    if (hasFrame && frame?.size) {
+      baseSizeRef.current = [...frame.size] as [number, number];
+      setScalePercent(100);
+    }
+    return () => { baseSizeRef.current = null; };
+  }, [selectedElement]);
+
+  const handleScaleChange = (percent: number) => {
+    if (!selectedElement || !hasFrame || !frame || !baseSizeRef.current) return;
+    setScalePercent(percent);
+    const factor = percent / 100;
+    const newW = Math.round(baseSizeRef.current[0] * factor);
+    const newH = Math.round(baseSizeRef.current[1] * factor);
+    (selectedElement as any).setFrame?.({ ...frame, size: [newW, newH] });
+    updateElement?.(selectedElement as TrackElement);
+  };
 
   const handleRotationChange = (rotation: number) => {
     if (selectedElement) {
@@ -154,6 +178,28 @@ export function ElementProps({ selectedElement, updateElement }: PropertiesPanel
             </PropertyRow>
           </div>
 
+          {/* Scale — for image/video elements */}
+          {hasFrame && (
+            <div className="property-section">
+              <PropertyRow
+                label="Scale"
+                secondary={
+                  <span>{scalePercent}%</span>
+                }
+              >
+                <input
+                  type="range"
+                  min="10"
+                  max="400"
+                  step="1"
+                  value={scalePercent}
+                  onChange={(e) => handleScaleChange(Number(e.target.value))}
+                  className="slider-purple"
+                />
+              </PropertyRow>
+            </div>
+          )}
+
           {/* Rotation */}
           <div className="property-section">
             <PropertyRow
@@ -173,6 +219,32 @@ export function ElementProps({ selectedElement, updateElement }: PropertiesPanel
                 onChange={(e) => handleRotationChange(Number(e.target.value))}
                 className="slider-purple"
               />
+            </PropertyRow>
+          </div>
+
+          {/* Layer order */}
+          <div className="property-section">
+            <PropertyRow label="Layer">
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button
+                  type="button"
+                  onClick={onBringForward}
+                  className="btn-ghost"
+                  title="Bring forward"
+                  style={{ padding: '4px 8px', fontSize: '11px' }}
+                >
+                  <ArrowUp className="icon-sm" /> Front
+                </button>
+                <button
+                  type="button"
+                  onClick={onSendBackward}
+                  className="btn-ghost"
+                  title="Send backward"
+                  style={{ padding: '4px 8px', fontSize: '11px' }}
+                >
+                  <ArrowDown className="icon-sm" /> Back
+                </button>
+              </div>
             </PropertyRow>
           </div>
         </div>

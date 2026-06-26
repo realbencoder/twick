@@ -11,6 +11,8 @@ export interface CloudMediaUploadProps {
   accept?: string;
   uploadApiUrl: string;
   provider: CloudUploadProvider;
+  /** Extra headers sent with the presign request (e.g. Authorization). */
+  headers?: Record<string, string>;
   buttonText?: string;
   className?: string;
   disabled?: boolean;
@@ -24,6 +26,7 @@ export const CloudMediaUpload = ({
   accept,
   uploadApiUrl,
   provider,
+  headers,
   buttonText = "Upload to cloud",
   className,
   disabled = false,
@@ -39,7 +42,7 @@ export const CloudMediaUpload = ({
     progress,
     error,
     resetError,
-  } = useCloudMediaUpload({ uploadApiUrl, provider });
+  } = useCloudMediaUpload({ uploadApiUrl, provider, headers });
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

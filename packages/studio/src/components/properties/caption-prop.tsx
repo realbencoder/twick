@@ -38,6 +38,14 @@ type CaptionColorsState = {
 };
 
 const CAPTION_STYLE_COLOR_META: Record<string, CaptionStyleColorMeta> = {
+  // Basic — clean text with thin outline, no animation
+  basic: {
+    usedColors: ["text", "outlineColor"],
+    labels: {
+      text: "Text Color",
+      outlineColor: "Outline Color",
+    },
+  },
   // Word background highlight - white text on colored pill
   highlight_bg: {
     // Text color, and background pill color used in animation.

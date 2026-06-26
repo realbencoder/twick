@@ -128,6 +128,8 @@ export interface ICaptionGenerationService {
 export interface UploadConfig {
   uploadApiUrl: string;
   provider: "s3" | "gcs";
+  /** Extra headers sent with the presign request (e.g. Authorization). */
+  headers?: Record<string, string>;
 }
 
 export interface ProjectTemplate {

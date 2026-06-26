@@ -5,11 +5,14 @@ export type CloudUploadProvider = "s3" | "gcs";
 export interface UseCloudMediaUploadConfig {
   uploadApiUrl: string;
   provider: CloudUploadProvider;
+  /** Extra headers sent with the presign / upload request (e.g. Authorization). */
+  headers?: Record<string, string>;
 }
 
 /** Response from S3 presign API (e.g. file-uploader Lambda). */
 export interface S3PresignResponse {
   uploadUrl: string;
+  readUrl?: string; // CDN or presigned GET URL for reading back
   key?: string;
   bucket?: string;
   contentType?: string;
@@ -64,7 +67,7 @@ const putFileWithProgress = (
 export const useCloudMediaUpload = (
   config: UseCloudMediaUploadConfig
 ): UseCloudMediaUploadReturn => {
-  const { uploadApiUrl, provider } = config;
+  const { uploadApiUrl, provider, headers: extraHeaders } = config;
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +86,7 @@ export const useCloudMediaUpload = (
         if (provider === "s3") {
           const presignRes = await fetch(uploadApiUrl, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...extraHeaders },
             body: JSON.stringify({
               filename: file.name,
               contentType: file.type || "application/octet-stream",
@@ -103,7 +106,8 @@ export const useCloudMediaUpload = (
 
           await putFileWithProgress(uploadUrl, file, setProgress);
 
-          const publicUrl = uploadUrl.split("?")[0];
+          // Use readUrl (CDN) if provided, otherwise strip query params from uploadUrl
+          const publicUrl = presignData.readUrl || uploadUrl.split("?")[0];
           return { url: publicUrl };
         }
 
@@ -144,7 +148,7 @@ export const useCloudMediaUpload = (
         setProgress(0);
       }
     },
-    [uploadApiUrl, provider]
+    [uploadApiUrl, provider, extraHeaders]
   );
 
   return {

@@ -39,6 +39,34 @@ export function PropertiesPanelContainer({
     editor.getBackgroundColor() ??
     DEFAULT_CANVAS_BACKGROUND;
 
+  const handleBringForward = useCallback(() => {
+    if (!selectedElement || !present?.tracks) return;
+    const tracks = present.tracks;
+    const trackIdx = tracks.findIndex((t: any) => t.elements?.some((e: any) => e === selectedElement));
+    if (trackIdx > 0) {
+      const editorTracks = editor.getTracksByPredicate(() => true);
+      if (trackIdx < editorTracks.length) {
+        const reordered = [...editorTracks];
+        [reordered[trackIdx - 1], reordered[trackIdx]] = [reordered[trackIdx], reordered[trackIdx - 1]];
+        editor.reorderTracks(reordered);
+      }
+    }
+  }, [selectedElement, present, editor]);
+
+  const handleSendBackward = useCallback(() => {
+    if (!selectedElement || !present?.tracks) return;
+    const tracks = present.tracks;
+    const trackIdx = tracks.findIndex((t: any) => t.elements?.some((e: any) => e === selectedElement));
+    if (trackIdx >= 0 && trackIdx < tracks.length - 1) {
+      const editorTracks = editor.getTracksByPredicate(() => true);
+      if (trackIdx < editorTracks.length - 1) {
+        const reordered = [...editorTracks];
+        [reordered[trackIdx], reordered[trackIdx + 1]] = [reordered[trackIdx + 1], reordered[trackIdx]];
+        editor.reorderTracks(reordered);
+      }
+    }
+  }, [selectedElement, present, editor]);
+
   const handleBackgroundColorChange = useCallback(
     (value: string) => {
       editor.setBackgroundColor(value);
@@ -152,6 +180,8 @@ export function PropertiesPanelContainer({
                       <ElementProps
                         selectedElement={selectedElement}
                         updateElement={updateElement}
+                        onBringForward={handleBringForward}
+                        onSendBackward={handleSendBackward}
                       />
                     )}
 

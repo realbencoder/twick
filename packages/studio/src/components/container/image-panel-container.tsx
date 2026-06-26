@@ -39,7 +39,7 @@ export function ImagePanelContainer(props: PanelProps) {
       {activeSource === "user" ? (
         <ImageUserAssetsSection {...props} />
       ) : (
-        <ImagePublicAssetsSection />
+        <ImagePublicAssetsSection {...props} />
       )}
     </>
   );
@@ -112,6 +112,7 @@ function ImageUserAssetsSection(props: PanelProps) {
           <CloudMediaUpload
             uploadApiUrl={props.uploadConfig.uploadApiUrl}
             provider={props.uploadConfig.provider}
+            headers={props.uploadConfig.headers}
             accept="image/*"
             onSuccess={onCloudUploadSuccess}
             buttonText="Upload image"
@@ -135,7 +136,42 @@ function ImageUserAssetsSection(props: PanelProps) {
   );
 }
 
-function ImagePublicAssetsSection() {
+function ImagePublicAssetsSection(props: PanelProps) {
+  const { handleSelection } = useMediaPanel(
+    "image",
+    {
+      selectedElement: props.selectedElement ?? null,
+      addElement: props.addElement!,
+      updateElement: props.updateElement!,
+    },
+    props.videoResolution,
+  );
+  const [proxyingId, setProxyingId] = useState<string | null>(null);
+
+  // Proxy public assets through our S3 before adding to timeline
+  const handlePublicSelection = async (item: MediaItem, forceAdd?: boolean) => {
+    setProxyingId(item.id);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (props.uploadConfig?.headers) Object.assign(headers, props.uploadConfig.headers);
+      const res = await fetch("/api/assets/proxy", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ url: item.url, type: "image", name: `pexels-${item.id}.jpg` }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        handleSelection({ ...item, url: data.url }, forceAdd);
+      } else {
+        // Fallback to direct URL
+        handleSelection(item, forceAdd);
+      }
+    } catch {
+      handleSelection(item, forceAdd);
+    }
+    setProxyingId(null);
+  };
+
   const assetLibrary = getAssetLibrary();
   const [providerConfigs, setProviderConfigs] = useState<AssetProviderConfig[]>(
     [],
@@ -262,9 +298,9 @@ function ImagePublicAssetsSection() {
         items={publicItems}
         searchQuery={publicSearchQuery}
         onSearchChange={setPublicSearchQuery}
-        onItemSelect={() => {}}
+        onItemSelect={handlePublicSelection}
         onFileUpload={() => {}}
-        isLoading={isPublicLoading}
+        isLoading={isPublicLoading || !!proxyingId}
         acceptFileTypes={[]}
         onUrlAdd={() => {}}
         showAddByUrl={false}

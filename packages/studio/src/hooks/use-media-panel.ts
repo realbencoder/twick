@@ -80,6 +80,10 @@ export const useMediaPanel = (
     const config = mediaConfigs[type];
     if (forceAdd) {
       const element = config.createElement(item.url, videoResolution);
+      // Mute B-roll video audio by default — users want visuals, not stock audio
+      if (type === "video" && element instanceof VideoElement) {
+        element.setProps({ ...element.getProps(), volume: 0 });
+      }
       addElement(element);
     } else {
       if (selectedElement) {
@@ -87,6 +91,10 @@ export const useMediaPanel = (
         updateElement(selectedElement);
       } else {
         const element = config.createElement(item.url, videoResolution);
+        // Mute B-roll video audio by default
+        if (type === "video" && element instanceof VideoElement) {
+          element.setProps({ ...element.getProps(), volume: 0 });
+        }
         addElement(element);
       }
     }

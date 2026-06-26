@@ -1539,6 +1539,7 @@ html {
 }
 
 .studio-right-panel {
+  position: relative;
   width: 360px;
   flex-shrink: 0;
   display: flex;
@@ -1546,6 +1547,30 @@ html {
   background-color: rgba(23, 23, 28, 0.98);
   border-left: 1px solid rgba(255, 255, 255, 0.06);
   box-shadow: var(--elevation-panel);
+}
+
+.panel-close-btn {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 10;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 150ms, background-color 150ms;
+}
+
+.panel-close-btn:hover {
+  color: rgba(255, 255, 255, 0.7);
+  background-color: rgba(255, 255, 255, 0.08);
 }
 
 /* Color Input */

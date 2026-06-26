@@ -37,7 +37,7 @@ export function VideoPanelContainer(props: PanelProps) {
       {activeSource === "user" ? (
         <VideoUserAssetsSection {...props} />
       ) : (
-        <VideoPublicAssetsSection />
+        <VideoPublicAssetsSection {...props} />
       )}
     </>
   );
@@ -104,6 +104,7 @@ function VideoUserAssetsSection(props: PanelProps) {
           <CloudMediaUpload
             uploadApiUrl={props.uploadConfig.uploadApiUrl}
             provider={props.uploadConfig.provider}
+            headers={props.uploadConfig.headers}
             accept="video/*"
             onSuccess={onCloudUploadSuccess}
             buttonText="Upload video"
@@ -125,7 +126,41 @@ function VideoUserAssetsSection(props: PanelProps) {
   );
 }
 
-function VideoPublicAssetsSection() {
+function VideoPublicAssetsSection(props: PanelProps) {
+  const { handleSelection } = useMediaPanel(
+    "video",
+    {
+      selectedElement: props.selectedElement ?? null,
+      addElement: props.addElement!,
+      updateElement: props.updateElement!,
+    },
+    props.videoResolution,
+  );
+  const [proxyingId, setProxyingId] = useState<string | null>(null);
+
+  // Proxy public video assets through our S3 before adding to timeline
+  const handlePublicSelection = async (item: MediaItem, forceAdd?: boolean) => {
+    setProxyingId(item.id);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (props.uploadConfig?.headers) Object.assign(headers, props.uploadConfig.headers);
+      const res = await fetch("/api/assets/proxy", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ url: item.url, type: "video", name: `pexels-${item.id}.mp4` }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        handleSelection({ ...item, url: data.url }, forceAdd);
+      } else {
+        handleSelection(item, forceAdd);
+      }
+    } catch {
+      handleSelection(item, forceAdd);
+    }
+    setProxyingId(null);
+  };
+
   const assetLibrary = getAssetLibrary();
   const [providerConfigs, setProviderConfigs] = useState<AssetProviderConfig[]>(
     [],
@@ -255,11 +290,9 @@ function VideoPublicAssetsSection() {
       </div>
       <VideoPanel
         items={publicItems}
-        onItemSelect={() => {
-          // Selection handled via timeline; public items behave same as user items
-        }}
+        onItemSelect={handlePublicSelection}
         onFileUpload={() => { }}
-        isLoading={isPublicLoading}
+        isLoading={isPublicLoading || !!proxyingId}
         acceptFileTypes={[]}
         onUrlAdd={() => { }}
         showAddByUrl={false}
