@@ -126,7 +126,23 @@ export class ElementSplitter implements ElementVisitor<SplitResult> {
     const originalTextArray = originalText.split(" ");
     const percentage =
       (this.splitTime - element.getStart()) / element.getDuration();
-    const splitWordIndex = Math.floor(originalTextArray.length * percentage);
+    // A single-word (or empty) caption can't split into two non-empty halves —
+    // leave it whole rather than emit an empty-text caption that renders NOTHING
+    // for its entire window (the "a section shows no subtitle after a cut" bug).
+    // Ripple-delete will trim it later if footage is actually removed.
+    if (originalTextArray.length < 2) {
+      return { firstElement: null, secondElement: null, success: false };
+    }
+    // Clamp so NEITHER half is empty. A cut inside the first word's time-fraction
+    // would give index 0 (empty first half); inside the last word's fraction would
+    // give index === length (empty second half). Keep both halves at >= 1 word.
+    const splitWordIndex = Math.max(
+      1,
+      Math.min(
+        originalTextArray.length - 1,
+        Math.floor(originalTextArray.length * percentage)
+      )
+    );
 
     const firstElement = this.elementCloner.visitCaptionElement(
       element

@@ -14,17 +14,20 @@ function shouldIgnoreKeydown(): boolean {
  * - Delete, Backspace: delete
  * - Cmd/Ctrl+Z: undo
  * - Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y: redo
+ * - Cmd/Ctrl+B or S: split the selected clip at the playhead
  * Ignores events when focus is in input, textarea, or contenteditable.
  */
 export function useCanvasKeyboard({
   onDelete,
   onUndo,
   onRedo,
+  onSplit,
   enabled = true,
 }: {
   onDelete?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
+  onSplit?: () => void;
   enabled?: boolean;
 }) {
   useEffect(() => {
@@ -52,6 +55,20 @@ export function useCanvasKeyboard({
           onRedo?.();
           return;
         }
+
+        // Split: Cmd/Ctrl+B (CapCut convention)
+        if (key === "b" && !e.shiftKey) {
+          e.preventDefault();
+          onSplit?.();
+          return;
+        }
+      }
+
+      // Split: S (single key, no modifier — fast split)
+      if (!hasPrimaryModifier && key === "s") {
+        e.preventDefault();
+        onSplit?.();
+        return;
       }
 
       // Delete / Backspace (no modifiers)
@@ -63,5 +80,5 @@ export function useCanvasKeyboard({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [enabled, onDelete, onUndo, onRedo]);
+  }, [enabled, onDelete, onUndo, onRedo, onSplit]);
 }

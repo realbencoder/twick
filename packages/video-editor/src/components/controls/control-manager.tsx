@@ -1,6 +1,6 @@
 import { useLivePlayerContext } from "@twick/live-player";
 import PlayerControls from "./player-controls";
-import { useTimelineContext } from "@twick/timeline";
+import { TrackElement, useTimelineContext } from "@twick/timeline";
 import { usePlayerControl } from "../../hooks/use-player-control";
 import useTimelineControl from "../../hooks/use-timeline-control";
 import { useCanvasKeyboard } from "../../hooks/use-canvas-keyboard";
@@ -40,6 +40,12 @@ const ControlManager = ({
     onDelete: () => deleteItem(),
     onUndo: () => handleUndo(),
     onRedo: () => handleRedo(),
+    onSplit: () => {
+      // Split the selected clip at the playhead (mirrors the Split button).
+      if (selectedItem instanceof TrackElement) {
+        splitElement(selectedItem, currentTime);
+      }
+    },
   });
 
   const handleSeek = (time: number) => {
