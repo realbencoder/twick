@@ -19,6 +19,11 @@ overrides:
   '@twick/player': ^0.15.25
   '@twick/cli': ^0.15.25
 
+patchedDependencies:
+  '@twick/2d@0.15.25':
+    hash: vmo4rdg7xbqj36bmd2yerev7wa
+    path: patches/@twick__2d@0.15.25.patch
+
 importers:
 
   .:
@@ -220,7 +225,7 @@ importers:
         version: 129.0.0
       '@twick/2d':
         specifier: ^0.15.25
-        version: 0.15.25
+        version: 0.15.25(patch_hash=vmo4rdg7xbqj36bmd2yerev7wa)
       '@twick/core':
         specifier: ^0.15.25
         version: 0.15.25
@@ -604,7 +609,7 @@ importers:
     dependencies:
       '@twick/2d':
         specifier: ^0.15.25
-        version: 0.15.25
+        version: 0.15.25(patch_hash=vmo4rdg7xbqj36bmd2yerev7wa)
       '@twick/core':
         specifier: ^0.15.25
         version: 0.15.25
@@ -842,7 +847,7 @@ importers:
         version: 1.3.2(preact@10.28.2)
       '@twick/2d':
         specifier: ^0.15.25
-        version: 0.15.25
+        version: 0.15.25(patch_hash=vmo4rdg7xbqj36bmd2yerev7wa)
       '@twick/core':
         specifier: ^0.15.25
         version: 0.15.25
@@ -8690,7 +8695,7 @@ packages:
     resolution: {integrity: sha512-vxhUy4J8lyeyinH7Azl1pdd43GJhZH/tP2weN8TntQblOY+A0XbT8DJk1/oCPuOOyg/Ja757rG0CgHcWC8OfMA==}
     dev: true
 
-  /@twick/2d@0.15.25:
+  /@twick/2d@0.15.25(patch_hash=vmo4rdg7xbqj36bmd2yerev7wa):
     resolution: {integrity: sha512-hqTvIVe76hkjg5uHdV75+RUqiIUiHNorrtj8lyBnB+IKqBfSHb1B6RZck/K2mkcqFw89uq9Lo8sJOSdoqi79Zg==}
     dependencies:
       '@codemirror/language': 6.12.1
@@ -8704,6 +8709,7 @@ packages:
       mp4box: 0.5.4
       parse-svg-path: 0.1.2
     dev: false
+    patched: true
 
   /@twick/ai-models@0.15.27:
     resolution: {integrity: sha512-alxzTrFpN8ef31A3YglaZYDtPtn9+Y+bAcg2pNHIMxdOs1isImFobr2MtgRK2yGclzpz39GuGTizAXAKEtoCtQ==}
@@ -8848,7 +8854,7 @@ packages:
     engines: {node: '>=20.0.0'}
     dependencies:
       '@preact/signals': 1.3.2(preact@10.28.2)
-      '@twick/2d': 0.15.25
+      '@twick/2d': 0.15.25(patch_hash=vmo4rdg7xbqj36bmd2yerev7wa)
       '@twick/core': 0.15.25
       '@twick/effects': 0.15.26
       '@twick/media-utils': 0.15.26

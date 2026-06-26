@@ -1,0 +1,88 @@
+diff --git a/dist/index.js b/dist/index.js
+index bc483cd31cbf14b7a039739eec5a7161c64483e7..2828c9db0ae20cc70d04ecde92546b95354608d1 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -10274,7 +10274,7 @@ async function getFrame(id, filePath, time, fps) {
+       return getFrameHTML(id, filePath, time, fps);
+     }
+     if (duration2 > 0 && time > duration2) {
+-      throw new Error(`Requested time ${time}s exceeds video duration ${duration2}s`);
++      time = duration2;
+     }
+     videoFrameExtractors.set(extractorId, extractor);
+   }
+@@ -10343,11 +10343,7 @@ var Video = class extends Media {
+   desiredSize() {
+     const custom = super.desiredSize();
+     if (custom.x === null && custom.y === null) {
+-      const image = this.video();
+-      return {
+-        x: image.videoWidth,
+-        y: image.videoHeight
+-      };
++      return this.view().size();
+     }
+     return custom;
+   }
+@@ -10511,30 +10507,38 @@ var Video = class extends Media {
+   }
+   async seekFunction() {
+     const playbackState = this.view().playbackState();
+-    if (playbackState === PlaybackState4.Playing || playbackState === PlaybackState4.Presenting) {
+-      return this.fastSeekedVideo();
+-    }
+-    if (playbackState === PlaybackState4.Paused) {
+-      return this.seekedVideo();
+-    }
+-    if (this.decoder() === "slow") {
+-      return this.seekedVideo();
+-    }
+-    if (this.decoder() === "ffmpeg") {
+-      return this.ffmpegSeekedVideo();
+-    }
+-    if (this.decoder() === "web") {
+-      return this.webcodecSeekedVideo();
+-    }
+-    if (!this.fileTypeWasDetected) {
+-      this.detectFileType();
+-    }
+-    if (this.detectedFileType === "webm") {
+-      return this.ffmpegSeekedVideo();
+-    }
+-    if (this.detectedFileType === "hls") {
+-      return this.seekedVideo();
++    if (playbackState === PlaybackState4.Playing || playbackState === PlaybackState4.Presenting) return this.fastSeekedVideo();
++    // For Paused or slow decoder: use <video> element but wait for frame on big seeks (cut boundaries)
++    if (playbackState === PlaybackState4.Paused || this.decoder() === "slow") {
++      const video = this.video();
++      const targetTime = this.clampTime(this.time());
++      const prevTime = video.currentTime;
++      const result = this.seekedVideo();
++      // Only wait on significant time jumps (>100ms = cut boundary, not frame-by-frame advance)
++      const timeDiff = Math.abs(prevTime - targetTime);
++      if (timeDiff > 0.1 && prevTime !== targetTime) {
++        await new Promise(resolve => {
++          let resolved = false;
++          const done = () => { if (!resolved) { resolved = true; resolve(); } };
++          if ('requestVideoFrameCallback' in video) {
++            video.requestVideoFrameCallback(done);
++          } else {
++            video.addEventListener('seeked', function onSeeked() {
++              video.removeEventListener('seeked', onSeeked);
++              done();
++            });
++          }
++          // Fallback timeout — 300ms max wait (same as Remotion)
++          setTimeout(done, 300);
++        });
++      }
++      return result;
+     }
++    if (this.decoder() === "ffmpeg") return this.ffmpegSeekedVideo();
++    if (this.decoder() === "web") return this.webcodecSeekedVideo();
++    if (!this.fileTypeWasDetected) this.detectFileType();
++    if (this.detectedFileType === "webm") return this.ffmpegSeekedVideo();
++    if (this.detectedFileType === "hls") return this.seekedVideo();
+     return this.webcodecSeekedVideo();
+   }
+   async draw(context) {

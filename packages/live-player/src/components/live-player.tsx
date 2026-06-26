@@ -165,7 +165,9 @@ export const LivePlayer = ({
         "style",
         "display: none;"
       );
-      // Merge baseProject with projectData for initial setup
+      // Set initial project data — the real data with video tracks
+      // arrives later via projectData prop update, which triggers
+      // the scene init cycle in the projectData useEffect below.
       const initialData = { ...baseProject, ...projectData };
       setProjectData(initialData);
     }
@@ -242,24 +244,99 @@ export const LivePlayer = ({
     }
   };
 
-  // Apply new project data whenever it changes
-  // Note: Initial data is set in onFirstRender() after player is ready
+  // Apply new project data whenever it changes.
+  // This is where the real video track data arrives (via UPDATE_PLAYER_DATA).
+  // We force the Motion Canvas scene to render a frame so it creates
+  // <video>/<audio> DOM elements from the actual project data.
+  const hasInitSceneRef = useRef(false);
+  const prevSeekTimeRef = useRef(seekTime);
+  const prevProjectDataRef = useRef(projectData);
   useEffect(() => {
-    // Only update if player has been initialized (after first render)
-    if (isFirstRender.current && playerRef.current?.htmlElement) {
+    if (!isFirstRender.current || !playerRef.current?.htmlElement) return;
+
+    const seekTimeChanged = prevSeekTimeRef.current !== seekTime;
+    const projectDataChanged = prevProjectDataRef.current !== projectData;
+    const currentFrame = playerRef.current.player?.playback?.frame ?? '?';
+    console.log('[LivePlayer] useEffect fired — seekTimeChanged:', seekTimeChanged,
+      'projectDataChanged:', projectDataChanged,
+      'seekTime:', seekTime, 'prevSeekTime:', prevSeekTimeRef.current,
+      'currentFrame:', currentFrame,
+      'version:', (projectData as any)?.input?.version);
+
+    const el = playerRef.current.htmlElement;
+    const player = playerRef.current.player;
+
+    // CRITICAL: Only call setProjectData when projectData actually changed.
+    // Previously this was called on every effect run (including seekTime-only
+    // changes), which triggered attributeChangedCallback. That callback does
+    // requestSeek(playback.frame) — but playback.frame can be stale/wrong
+    // (Motion Canvas internal frame counter drifts from timeline time).
+    // This was the root cause of playhead jumping after cuts: seekTime change
+    // → setProjectData (unnecessarily) → attributeChangedCallback →
+    // requestSeek(staleFrame) → overrides the correct seekto event.
+    if (projectDataChanged) {
+      prevProjectDataRef.current = projectData;
+      console.log('[LivePlayer] projectData changed — calling setProjectData');
       setProjectData(projectData);
-      // Scrub to seekTime so the canvas shows the frame at current position (e.g. when
-      // a new video/element is added at 5:00, the player draws and shows that frame).
-      const el = playerRef.current.htmlElement;
+    }
+
+    // Only dispatch seekto when seekTime actually changed (user clicked
+    // timeline / scrubbed). Do NOT dispatch on projectData-only changes
+    // (split, element add/remove) — the Motion Canvas attributeChangedCallback
+    // already seeks to the current frame when variables update.
+    if (seekTimeChanged) {
+      prevSeekTimeRef.current = seekTime;
+      console.log('[LivePlayer] Dispatching seekto event with time:', seekTime);
       requestAnimationFrame(() => {
         el.dispatchEvent(new CustomEvent("seekto", { detail: seekTime }));
       });
+    } else {
+      console.log('[LivePlayer] Skipping seekto — seekTime unchanged');
+    }
+
+    // CRITICAL FIX: Motion Canvas scenes are generator functions that read
+    // variables ONCE at startup. If the scene started before variables were
+    // set (common on first load — scene starts with empty data), the scene
+    // must be RESET to re-read the now-correct variables.
+    //
+    // player.requestReset() tells the scene to restart from frame 0,
+    // which re-runs the generator and re-reads the input variables.
+    // A brief play then pause runs the scene for one frame with correct data.
+    if (!hasInitSceneRef.current && player) {
+      hasInitSceneRef.current = true;
+      const hasTracks = !!(projectData as any)?.input?.tracks?.length;
+      console.log('[LivePlayer] Init scene — resetting to re-read variables. Has tracks:', hasTracks);
+
+      // Reset scene so the generator re-reads the (now correct) variables.
+      // Then run ONE frame via play/pause so the scene processes the data.
+      // Skip the play/pause if data already has tracks — the scene can
+      // process them on the next user-initiated play without interference.
+      setTimeout(() => {
+        (player as any).requestReset();
+        if (!hasTracks) {
+          // No tracks yet — force a frame render so scene is ready
+          player.togglePlayback(true);
+          setTimeout(() => {
+            player.togglePlayback(false);
+            console.log('[LivePlayer] Init complete — scene reset (empty → waiting for data)');
+          }, 200);
+        } else {
+          console.log('[LivePlayer] Init complete — scene reset with correct data');
+        }
+      }, 100);
     }
   }, [projectData, setProjectData, seekTime]);
 
-  // Play/pause player based on external prop
-  // Retry if player isn't ready yet (first load race condition)
+  // Play/pause player based on external prop.
+  // Uses a MutationObserver to catch dynamically-created media elements
+  // that the scene adds after the initial pause — prevents audio leaks.
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+
   useEffect(() => {
+    const cleanups: ReturnType<typeof setTimeout>[] = [];
+    let observer: MutationObserver | null = null;
+
     const tryToggle = () => {
       if (playerRef.current?.player) {
         playerRef.current.player.togglePlayback(playing);
@@ -269,19 +346,80 @@ export const LivePlayer = ({
     };
 
     if (!tryToggle()) {
-      // Player not ready yet — retry after short delay
-      const retryTimer = setTimeout(() => tryToggle(), 500);
-      const retryTimer2 = setTimeout(() => tryToggle(), 1000);
-      return () => { clearTimeout(retryTimer); clearTimeout(retryTimer2); };
+      cleanups.push(setTimeout(() => tryToggle(), 500));
+      cleanups.push(setTimeout(() => tryToggle(), 1000));
     }
 
-    // Force-pause all media elements when stopping
-    if (!playing && playerContainerRef.current) {
-      const mediaElements = playerContainerRef.current.querySelectorAll('video, audio');
-      mediaElements.forEach((el) => {
-        try { (el as HTMLMediaElement).pause(); } catch {}
+    // Pause + mute a single media element
+    const muteAndPause = (media: HTMLMediaElement) => {
+      try { media.pause(); media.muted = true; } catch {}
+    };
+
+    // Unmute a single media element
+    const unmute = (media: HTMLMediaElement) => {
+      try { media.muted = false; } catch {}
+    };
+
+    // Find all media elements including inside shadow DOMs
+    const getAllMedia = (): HTMLMediaElement[] => {
+      const container = playerContainerRef.current;
+      if (!container) return [];
+      const results: HTMLMediaElement[] = [];
+      container.querySelectorAll('video, audio').forEach((el) =>
+        results.push(el as HTMLMediaElement)
+      );
+      // Check shadow DOMs
+      container.querySelectorAll('*').forEach((el) => {
+        if ((el as any).shadowRoot) {
+          (el as any).shadowRoot.querySelectorAll('video, audio').forEach((m: HTMLMediaElement) =>
+            results.push(m)
+          );
+        }
       });
+      return results;
+    };
+
+    if (!playing) {
+      // Pause all existing media
+      getAllMedia().forEach(muteAndPause);
+
+      // Watch for new media elements the scene creates asynchronously.
+      // Any new <video>/<audio> added while paused gets immediately muted+paused.
+      if (playerContainerRef.current) {
+        observer = new MutationObserver((mutations) => {
+          if (playingRef.current) return; // playing started, stop intercepting
+          for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+              if (node instanceof HTMLMediaElement) {
+                muteAndPause(node);
+              } else if (node instanceof HTMLElement) {
+                node.querySelectorAll?.('video, audio').forEach((el) =>
+                  muteAndPause(el as HTMLMediaElement)
+                );
+              }
+            }
+          }
+        });
+        observer.observe(playerContainerRef.current, {
+          childList: true,
+          subtree: true,
+        });
+      }
+
+      // Safety net: catch anything the observer missed
+      cleanups.push(setTimeout(() => {
+        if (!playingRef.current) getAllMedia().forEach(muteAndPause);
+      }, 200));
+    } else {
+      // Playing — unmute any media elements (audio tracks may use DOM elements)
+      getAllMedia().forEach(unmute);
+      cleanups.push(setTimeout(() => getAllMedia().forEach(unmute), 100));
     }
+
+    return () => {
+      cleanups.forEach((t) => clearTimeout(t));
+      if (observer) observer.disconnect();
+    };
   }, [playing]);
 
   useEffect(() => {
@@ -299,7 +437,7 @@ export const LivePlayer = ({
         );
       }
     };
-  }, []);
+  }, [handleUpdate]);
 
   return (
     <div
