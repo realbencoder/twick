@@ -102,6 +102,8 @@ export const PLAYER_STATE = {
  * ```
  */
 export const CAPTION_STYLE = {
+  /** Basic: clean text with thin outline, no animation */
+  BASIC: "basic",
   /** Highlights background of each word */
   WORD_BG_HIGHLIGHT: "highlight_bg",
   /** Animates text word by word */
@@ -137,6 +139,10 @@ export const CAPTION_STYLE = {
  * ```
  */
 export const CAPTION_STYLE_OPTIONS = {
+  [CAPTION_STYLE.BASIC]: {
+    label: "Basic",
+    value: CAPTION_STYLE.BASIC,
+  },
   [CAPTION_STYLE.WORD_BG_HIGHLIGHT]: {
     label: "Highlight Background",
     value: CAPTION_STYLE.WORD_BG_HIGHLIGHT,

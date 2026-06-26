@@ -197,13 +197,20 @@ export class TimelineEditor {
     return updatedTimelineData as TimelineTrackData;
   }
 
-  addTrack(name: string, type: string = TRACK_TYPES.ELEMENT): Track {
+  addTrack(name: string, type: string = TRACK_TYPES.ELEMENT, insertAtIndex?: number): Track {
     const prevTimelineData = this.getTimelineData();
     const id = `t-${generateShortUuid()}`;
     const track = new Track(name, type, id);
-    const updatedTimelines = [...(prevTimelineData?.tracks || []), track];
+    let updatedTimelines: Track[];
+    if (insertAtIndex !== undefined) {
+      const tracks = prevTimelineData?.tracks || [];
+      const idx = Math.max(0, Math.min(insertAtIndex, tracks.length));
+      updatedTimelines = [...tracks.slice(0, idx), track, ...tracks.slice(idx)];
+    } else {
+      updatedTimelines = [...(prevTimelineData?.tracks || []), track];
+    }
     this.setTimelineData({ tracks: updatedTimelines, updatePlayerData: true });
-    this.emit("track:added", { track: track.serialize(), index: updatedTimelines.length - 1 });
+    this.emit("track:added", { track: track.serialize(), index: insertAtIndex ?? updatedTimelines.length - 1 });
     return track;
   }
 
@@ -363,11 +370,23 @@ export class TimelineEditor {
     element: TrackElement
   ): Promise<boolean> {
     if (!track) {
-      throw new Error("TRACK_NOT_FOUND"); 
+      throw new Error("TRACK_NOT_FOUND");
     }
     try {
+      // Find the main video track's end time to clamp overlay elements
+      let maxDuration: number | undefined;
+      if (track.getType() !== TRACK_TYPES.VIDEO) {
+        const videoTracks = this.getTracksByType(TRACK_TYPES.VIDEO);
+        if (videoTracks.length > 0) {
+          const videoElements = videoTracks[0].getElements();
+          if (videoElements.length > 0) {
+            maxDuration = Math.max(...videoElements.map(el => el.getEnd()));
+          }
+        }
+      }
+
       // Use the visitor pattern to handle different element types
-      const elementAdder = new ElementAdder(track);
+      const elementAdder = new ElementAdder(track, false, maxDuration);
       const result = await element.accept(elementAdder);
 
       if (result) {
@@ -422,27 +441,87 @@ export class TimelineEditor {
   }
 
   /**
-   * Remove an element and shift all later elements on ALL tracks to close the gap.
-   * Prevents black frames and keeps audio in sync with video (ripple delete).
+   * Remove an element and shift later elements on the SAME TRACK to close the gap.
+   * When a VIDEO element is removed, also removes/trims/shifts caption track elements
+   * that overlap the gap. Non-video deletions (B-roll, text, images) only affect same track
+   * to prevent subtitle overlap.
    */
   rippleRemoveElement(element: TrackElement): boolean {
     const gapStart = element.getStart();
+    const gapEnd = gapStart + element.getDuration();
     const gapDuration = element.getDuration();
     const elementId = element.getId();
+    const elementTrackId = element.getTrackId();
+    const elementTrack = this.getTrackById(elementTrackId);
+    if (!elementTrack) return false;
+    const isVideoTrack = elementTrack.getType() === TRACK_TYPES.VIDEO;
 
-    const removed = this.removeElement(element);
-    if (!removed || gapDuration <= 0) return removed;
+    // Remove WITHOUT snapshotting (friend mutation) — the single trailing setTimelineData below
+    // is the SOLE undo snapshot for the whole ripple. Previously this.removeElement (here AND in
+    // the per-caption loop) each snapshotted, so one delete became K+2 history entries and Cmd+Z
+    // landed on an intermediate, never-seen state ("undo cuts random things").
+    elementTrack.createFriend().removeElement(element);
+    if (gapDuration <= 0) {
+      const committed = this.getTimelineData();
+      if (committed) this.setTimelineData({ tracks: committed.tracks, updatePlayerData: true, forceUpdate: true });
+      return true;
+    }
 
-    // Shift all elements that start at or after the gap to close it
     const currentData = this.getTimelineData();
     if (currentData) {
       for (const track of currentData.tracks) {
+        const isSameTrack = track.getId() === elementTrackId;
+        const isCaptionTrack = track.getType() === TRACK_TYPES.CAPTION;
+        // Process same track always; also process caption tracks when a video element is removed
+        if (!isSameTrack && !(isVideoTrack && isCaptionTrack)) continue;
+
+        const elementsToRemove: TrackElement[] = [];
         for (const el of track.getElements()) {
-          if (el.getId() === elementId) continue; // skip the removed element
-          if (el.getStart() >= gapStart + gapDuration) {
-            el.setStart(el.getStart() - gapDuration);
-            el.setEnd(el.getEnd() - gapDuration);
+          if (el.getId() === elementId) continue;
+          const elStart = el.getStart();
+          const elEnd = el.getEnd();
+
+          // Caption fully inside the gap — mark for removal
+          if (isCaptionTrack && isVideoTrack && elStart >= gapStart && elEnd <= gapEnd) {
+            elementsToRemove.push(el);
+            continue;
           }
+          // Caption overlaps gap start — trim its end
+          if (isCaptionTrack && isVideoTrack && elStart < gapStart && elEnd > gapStart && elEnd <= gapEnd) {
+            el.setEnd(gapStart);
+            this.adjustCaptionWordsForTimeChange(el, elStart, elEnd);
+            continue;
+          }
+          // Caption overlaps gap end — trim its start and shift
+          if (isCaptionTrack && isVideoTrack && elStart >= gapStart && elStart < gapEnd && elEnd > gapEnd) {
+            const prevStart = elStart;
+            const prevEnd = elEnd;
+            el.setStart(gapStart);
+            el.setEnd(prevEnd - gapDuration);
+            this.adjustCaptionWordsForTimeChange(el, prevStart, prevEnd);
+            continue;
+          }
+          // Caption spans entire gap — trim out the gap duration
+          if (isCaptionTrack && isVideoTrack && elStart < gapStart && elEnd > gapEnd) {
+            const prevEnd = elEnd;
+            el.setEnd(prevEnd - gapDuration);
+            this.adjustCaptionWordsForTimeChange(el, elStart, prevEnd);
+            continue;
+          }
+          // Element starts after the gap — shift left
+          if (elStart >= gapEnd) {
+            const prevStart = el.getStart();
+            const prevEnd = el.getEnd();
+            el.setStart(prevStart - gapDuration);
+            el.setEnd(prevEnd - gapDuration);
+            this.adjustCaptionWordsForTimeChange(el, prevStart, prevEnd);
+          }
+        }
+        // Remove captions fully inside the gap — friend mutation, no per-element snapshot (the
+        // single trailing setTimelineData is the sole undo entry; see the top of this method).
+        const trackFriend = track.createFriend();
+        for (const el of elementsToRemove) {
+          trackFriend.removeElement(el);
         }
       }
       this.setTimelineData({ tracks: currentData.tracks, updatePlayerData: true, forceUpdate: true });
@@ -507,10 +586,25 @@ export class TimelineEditor {
         // Remove the original element from the track
         element.accept(elementRemover);
 
-        // Add the first split element to the track
-        const elementAdder = new ElementAdder(track);
-        result.firstElement.accept(elementAdder);
-        result.secondElement.accept(elementAdder);
+        // Add the split halves — MUST await since the adder is async. skipMetaUpdate=true because
+        // the halves already carry full metadata from the cloner. ATOMIC: if a half fails to add,
+        // roll back (remove any landed half, restore the original) instead of leaving the track
+        // with the original GONE — that partial state was the data-loss / green-thumbnail bug.
+        try {
+          const elementAdder = new ElementAdder(track, true);
+          await result.firstElement.accept(elementAdder);
+          await result.secondElement.accept(elementAdder);
+        } catch (addError) {
+          const rollbackRemover = new ElementRemover(track);
+          try { result.firstElement.accept(rollbackRemover); } catch {}
+          try { result.secondElement.accept(rollbackRemover); } catch {}
+          try {
+            await element.accept(new ElementAdder(track, true));
+          } catch (restoreError) {
+            console.error("[Timeline] splitElement rollback could not restore the original element:", restoreError);
+          }
+          return { firstElement: element, secondElement: null, success: false };
+        }
 
         // Update the timeline data to reflect the change
         const currentData = this.getTimelineData();
@@ -952,6 +1046,7 @@ export class TimelineEditor {
         if (start >= toTime) {
           element.setStart(start - durationToRemove);
           element.setEnd(end - durationToRemove);
+          this.adjustCaptionWordsForTimeChange(element, start, end);
           continue;
         }
         if (start >= fromTime && end <= toTime) {
@@ -963,19 +1058,25 @@ export class TimelineEditor {
           const result = element.accept(splitter);
           friend.removeElement(element);
           if (result.success && result.firstElement && result.secondElement) {
+            const secondPrevStart = result.secondElement.getStart();
+            const secondPrevEnd = result.secondElement.getEnd();
             result.secondElement.setEnd(fromTime + (end - toTime));
+            this.adjustCaptionWordsForTimeChange(result.secondElement, secondPrevStart, secondPrevEnd);
             friend.addElement(result.firstElement, true);
             friend.addElement(result.secondElement, true);
           }
           continue;
         }
         if (start < fromTime && end <= toTime) {
+          const prevEnd = end;
           element.setEnd(fromTime);
+          this.adjustCaptionWordsForTimeChange(element, start, prevEnd);
           continue;
         }
         if (start >= fromTime && end > toTime) {
           element.setStart(fromTime);
           element.setEnd(fromTime + (end - toTime));
+          this.adjustCaptionWordsForTimeChange(element, start, end);
         }
       }
       newTracks.push(newTrack);
@@ -1041,9 +1142,16 @@ export class TimelineEditor {
             (element as any)[key] = (patch as Record<string, unknown>)[key];
           }
         });
-        const updater = new ElementUpdater(track);
-        element.accept(updater);
-        changed = true;
+        try {
+          const updater = new ElementUpdater(track);
+          element.accept(updater);
+          changed = true;
+        } catch (validationError) {
+          // Revert to previous position if validation fails
+          element.setStart(prevStart);
+          element.setEnd(prevEnd);
+          console.warn('[Timeline] Element update rejected:', (validationError as Error).message);
+        }
         break;
       }
     }
@@ -1058,7 +1166,7 @@ export class TimelineEditor {
    * shift/scale existing timings into the new [s, e] interval. If the length no
    * longer matches, regenerate wordsMs using a letter-weighted distribution.
    */
-  private adjustCaptionWordsForTimeChange(
+  public adjustCaptionWordsForTimeChange(
     element: TrackElement,
     prevStart: number,
     prevEnd: number

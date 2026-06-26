@@ -99,7 +99,7 @@ export const getCurrentElements = (
           const element = elements[j];
           if (
             element.getStart() <= currentTime &&
-            element.getEnd() >= currentTime
+            element.getEnd() > currentTime
           ) {
             currentElements.push(element);
           }

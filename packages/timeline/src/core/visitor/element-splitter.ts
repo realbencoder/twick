@@ -126,27 +126,52 @@ export class ElementSplitter implements ElementVisitor<SplitResult> {
     const originalTextArray = originalText.split(" ");
     const percentage =
       (this.splitTime - element.getStart()) / element.getDuration();
+    const splitWordIndex = Math.floor(originalTextArray.length * percentage);
+
     const firstElement = this.elementCloner.visitCaptionElement(
       element
     ) as CaptionElement;
     firstElement.setText(
-      originalTextArray
-        .slice(0, Math.floor(originalTextArray.length * percentage))
-        .join(" ")
+      originalTextArray.slice(0, splitWordIndex).join(" ")
     );
     firstElement.setEnd(this.splitTime);
+
     const secondElement = this.elementCloner.visitCaptionElement(
       element
     ) as CaptionElement;
     secondElement.setText(
-      originalTextArray
-        .slice(
-          Math.floor(originalTextArray.length * percentage),
-          originalTextArray.length
-        )
-        .join(" ")
+      originalTextArray.slice(splitWordIndex).join(" ")
     );
     secondElement.setStart(this.splitTime);
+
+    // Split wordsMs array to match the text split — each half gets only
+    // the word timestamps that belong to its words. Without this, both
+    // halves inherit the full original wordsMs, causing word count vs
+    // array length mismatch and completely wrong subtitle timing.
+    const originalProps = element.getProps() ?? {};
+    const originalMeta = element.getMetadata?.() ?? {};
+    const propsWordsMs = (originalProps as Record<string, unknown>).wordsMs;
+    const metaWordsMs = (originalMeta as Record<string, unknown>).wordsMs;
+
+    if (Array.isArray(propsWordsMs) && propsWordsMs.length > 0) {
+      const firstProps = firstElement.getProps() ?? {};
+      (firstProps as Record<string, unknown>).wordsMs = propsWordsMs.slice(0, splitWordIndex);
+      firstElement.setProps(firstProps);
+
+      const secondProps = secondElement.getProps() ?? {};
+      (secondProps as Record<string, unknown>).wordsMs = propsWordsMs.slice(splitWordIndex);
+      secondElement.setProps(secondProps);
+    }
+    if (Array.isArray(metaWordsMs) && metaWordsMs.length > 0) {
+      const firstMeta = firstElement.getMetadata?.() ?? {};
+      (firstMeta as Record<string, unknown>).wordsMs = metaWordsMs.slice(0, splitWordIndex);
+      firstElement.setMetadata?.(firstMeta);
+
+      const secondMeta = secondElement.getMetadata?.() ?? {};
+      (secondMeta as Record<string, unknown>).wordsMs = metaWordsMs.slice(splitWordIndex);
+      secondElement.setMetadata?.(secondMeta);
+    }
+
     return { firstElement, secondElement, success: true };
   }
 

@@ -24,21 +24,37 @@ import { TrackFriend } from "../track/track.friend";
 export class ElementAdder implements ElementVisitor<Promise<boolean>> {
   private track: Track;
   private trackFriend: TrackFriend;
+  private skipMetaUpdate: boolean;
+  private maxDuration: number | undefined;
 
   /**
    * Creates a new ElementAdder instance for the specified track.
    *
    * @param track - The track to add elements to
-   * 
+   * @param skipMetaUpdate - If true, skips video/audio metadata fetch (used for split elements that already have metadata)
+   * @param maxDuration - If set, clamps element end times to this value (prevents B-roll/images from exceeding main video duration)
+   *
    * @example
    * ```js
    * const adder = new ElementAdder(track);
    * const success = await adder.visitVideoElement(videoElement);
    * ```
    */
-  constructor(track: Track) {
+  constructor(track: Track, skipMetaUpdate: boolean = false, maxDuration?: number) {
     this.track = track;
     this.trackFriend = track.createFriend();
+    this.skipMetaUpdate = skipMetaUpdate;
+    this.maxDuration = maxDuration;
+  }
+
+  /**
+   * Clamps an element's end time to maxDuration if set.
+   * Ensures the element has at least a minimal duration (0.1s).
+   */
+  private clampEnd(element: { getStart: () => number; getEnd: () => number; setEnd: (v: number) => void }) {
+    if (this.maxDuration !== undefined && element.getEnd() > this.maxDuration) {
+      element.setEnd(Math.max(element.getStart() + 0.1, this.maxDuration));
+    }
   }
 
   /**
@@ -56,7 +72,7 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
    * ```
    */
   async visitVideoElement(element: VideoElement): Promise<boolean> {
-    await element.updateVideoMeta();
+    if (!this.skipMetaUpdate) await element.updateVideoMeta();
     const elements = this.track.getElements();
     const lastEndtime = elements?.length
       ? elements[elements.length - 1].getEnd()
@@ -67,6 +83,7 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
     if (isNaN(element.getEnd())) {
       element.setEnd(element.getStart() + element.getMediaDuration());
     }
+    this.clampEnd(element);
 
     return this.trackFriend.addElement(element);
   }
@@ -78,7 +95,7 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
    *
    * @param element - The audio element to add
    * @returns Promise resolving to true if element was added successfully
-   * 
+   *
    * @example
    * ```js
    * const success = await adder.visitAudioElement(audioElement);
@@ -86,7 +103,7 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
    * ```
    */
   async visitAudioElement(element: AudioElement): Promise<boolean> {
-    await element.updateAudioMeta();
+    if (!this.skipMetaUpdate) await element.updateAudioMeta();
     const elements = this.track.getElements();
     const lastEndtime = elements?.length
       ? elements[elements.length - 1].getEnd()
@@ -97,7 +114,8 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
     if (isNaN(element.getEnd())) {
       element.setEnd(element.getStart() + element.getMediaDuration());
     }
-    
+    this.clampEnd(element);
+
     return this.trackFriend.addElement(element);
   }
 
@@ -127,7 +145,8 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
     if (isNaN(element.getEnd())) {
       element.setEnd(element.getStart() + 1);
     }
-    
+    this.clampEnd(element);
+
     return this.trackFriend.addElement(element);
   }
 
@@ -137,7 +156,7 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
    *
    * @param element - The text element to add
    * @returns Promise resolving to true if element was added successfully
-   * 
+   *
    * @example
    * ```js
    * const success = await adder.visitTextElement(textElement);
@@ -155,7 +174,8 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
     if (isNaN(element.getEnd())) {
       element.setEnd(element.getStart() + 1);
     }
-    
+    this.clampEnd(element);
+
     return this.trackFriend.addElement(element);
   }
 

@@ -292,8 +292,10 @@ export class Track {
    * ```
    */
   getTrackDuration(): number {
+    // max END across all elements — NOT array-last. After a split the array is no longer in
+    // time order, so array-last is the wrong element (the "cut-to-back" / wrong-duration symptom).
     return this.elements?.length
-      ? this.elements[this.elements.length - 1].getEnd()
+      ? Math.max(...this.elements.map((e) => e.getEnd()))
       : 0;
   }
 
@@ -322,6 +324,7 @@ export class Track {
     element.setTrackId(this.id);
     if (skipValidation) {
       this.elements.push(element);
+      this.sortElements();
       return true;
     }
 
@@ -332,6 +335,7 @@ export class Track {
           throw new ValidationError("Element is colliding with another element", ["COLLISION_ERROR"]);
         } else {
           this.elements.push(element);
+          this.sortElements();
           return true;
         }
       }
@@ -341,8 +345,23 @@ export class Track {
     return false;
   }
 
+  /** Keep elements in START-TIME order. The model stores them in insertion order, but split
+   *  appends both halves (so array order != time order), which broke neighbor math, the track
+   *  duration, and made segments appear "thrown to the back". Sorting after every mutation is the
+   *  keystone invariant the ripple/collision/duration logic all rely on. */
+  private sortElements(): void {
+    this.elements.sort((a, b) => a.getStart() - b.getStart());
+  }
+
   public isElementColliding(element: TrackElement): boolean {
-    return this.elements.some((e) => e.getStart() < element.getEnd() && e.getEnd() > element.getStart());
+    const EPSILON = 0.001;
+    // Exclude the element under test by ID (not instance ref) so updateElement's collision guard
+    // is robust whether a drag mutates in place or passes a fresh instance.
+    return this.elements.some((e) =>
+      e.getId() !== element.getId() &&
+      e.getStart() < element.getEnd() - EPSILON &&
+      e.getEnd() > element.getStart() + EPSILON
+    );
   }
 
   /**
@@ -395,6 +414,12 @@ export class Track {
         );
         if (index !== -1) {
           this.elements[index] = element;
+          // Keep start-time order after the update (a resize/trim may change an element's span).
+          // NOTE: do NOT collision-guard here — updateElement is the single funnel for ALL element
+          // mutations (props/text/transitions, not just drag), so a collision throw would silently
+          // break style/text edits on any pre-existing overlap (e.g. "Apply style to all subtitles").
+          // Overlap PREVENTION belongs at the drag-clamp layer (sorted neighbors), not the model funnel.
+          this.sortElements();
           return true;
         }
       }

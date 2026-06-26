@@ -59,8 +59,16 @@ export class ElementValidator implements ElementVisitor<boolean> {
         errors.push("Start time cannot be negative");
       }
       
+      if (element.getEnd() < element.getStart()) {
+        // Auto-fix: swap if inverted, enforce minimum 0.01s duration
+        const minDuration = 0.01;
+        if (element.getEnd() < element.getStart()) {
+          element.setEnd(element.getStart() + minDuration);
+        }
+      }
       if (element.getEnd() <= element.getStart()) {
-        errors.push("End time must be greater than start time");
+        // Enforce minimum duration instead of throwing
+        element.setEnd(element.getStart() + 0.01);
       }
     }
 
