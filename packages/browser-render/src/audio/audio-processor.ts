@@ -160,10 +160,19 @@ export class BrowserAudioProcessor {
         if (assetTime < 0 || assetTime >= asset.durationInSeconds) {
           outputData[i] = 0; // Silence
         } else {
-          // Apply playback rate
-          const inputSample = Math.floor((trimLeftSample + assetTime * asset.playbackRate * this.sampleRate));
-          if (inputSample >= 0 && inputSample < inputData.length) {
-            outputData[i] = inputData[inputSample] * asset.volume;
+          // Apply playback rate with linear interpolation (not nearest-neighbor)
+          // Nearest-neighbor (Math.floor) causes aliasing artifacts / distortion
+          const inputSampleF = trimLeftSample + assetTime * asset.playbackRate * this.sampleRate;
+          const inputSample0 = Math.floor(inputSampleF);
+          const inputSample1 = inputSample0 + 1;
+          const fraction = inputSampleF - inputSample0;
+          if (inputSample0 >= 0 && inputSample1 < inputData.length) {
+            // Linear interpolation between adjacent samples
+            const s0 = inputData[inputSample0];
+            const s1 = inputData[inputSample1];
+            outputData[i] = (s0 + fraction * (s1 - s0)) * asset.volume;
+          } else if (inputSample0 >= 0 && inputSample0 < inputData.length) {
+            outputData[i] = inputData[inputSample0] * asset.volume;
           } else {
             outputData[i] = 0;
           }
@@ -191,7 +200,7 @@ export class BrowserAudioProcessor {
       buffers.forEach(buffer => {
         const channelData = buffer.getChannelData(Math.min(channel, buffer.numberOfChannels - 1));
         for (let i = 0; i < channelData.length; i++) {
-          mixedData[i] = (mixedData[i] || 0) + channelData[i] / buffers.length;
+          mixedData[i] = (mixedData[i] || 0) + channelData[i];
         }
       });
     }
@@ -245,11 +254,12 @@ export class BrowserAudioProcessor {
     writeString(36, 'data');
     view.setUint32(40, dataLength, true);
 
-    // Write audio data
+    // Write audio data — apply volume reduction to prevent clipping on loud speech
     const volume = 0.8;
     let offset = 44;
     for (let i = 0; i < data.length; i++) {
-      const sample = Math.max(-1, Math.min(1, data[i]));
+      const scaled = data[i] * volume;
+      const sample = Math.max(-1, Math.min(1, scaled));
       view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
       offset += 2;
     }

@@ -42,7 +42,13 @@ export async function muxAudioVideo(
     console.log('Starting FFmpeg muxing...');
     console.log(`  Video blob size: ${options.videoBlob.size} bytes (${(options.videoBlob.size / 1024 / 1024).toFixed(2)} MB)`);
     console.log(`  Audio buffer size: ${options.audioBuffer.byteLength} bytes (${(options.audioBuffer.byteLength / 1024 / 1024).toFixed(2)} MB)`);
-    
+
+    // Copy audio buffer IMMEDIATELY before it can be detached/GC'd
+    // (loading FFmpeg takes 2+ seconds, during which the buffer can become invalid)
+    const audioBytes = new Uint8Array(options.audioBuffer.byteLength);
+    audioBytes.set(new Uint8Array(options.audioBuffer));
+    console.log(`  Audio buffer copied: ${audioBytes.byteLength} bytes`);
+
     const { FFmpeg } = await import('@twick/ffmpeg-web');
     const { fetchFile } = await import('@ffmpeg/util');
 
@@ -78,12 +84,13 @@ export async function muxAudioVideo(
     );
     console.log(`  Video file written: ${options.videoBlob.size} bytes`);
 
+    const audioSize = audioBytes.byteLength; // capture before writeFile may transfer/detach buffer
     await ffmpeg.writeFile(
       'audio.wav',
-      new Uint8Array(options.audioBuffer)
+      audioBytes
     );
     const writeDuration = Date.now() - writeStartTime;
-    console.log(`  Audio file written: ${options.audioBuffer.byteLength} bytes`);
+    console.log(`  Audio file written: ${audioSize} bytes`);
     console.log(`Files written successfully in ${writeDuration}ms`);
 
     console.log('Executing FFmpeg muxing command...');
@@ -104,14 +111,10 @@ export async function muxAudioVideo(
       '-map', '0:v:0',
       '-map', '1:a:0',
 
-      // Re-encode video to a very standard H.264 stream.
-      // Copying the WebCodecs/mp4-wasm bitstream can sometimes
-      // lead to timing issues where only the first second renders.
-      '-c:v', 'libx264',
-      '-preset', 'veryfast',
-      '-crf', '20',
+      // Stream-copy video (already H.264 from WebCodecs) — no re-encode.
+      '-c:v', 'copy',
 
-      // AAC audio
+      // AAC audio encode (WAV → AAC)
       '-c:a', 'aac',
       '-b:a', '192k',
 

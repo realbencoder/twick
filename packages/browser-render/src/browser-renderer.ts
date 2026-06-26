@@ -93,7 +93,9 @@ class BrowserWasmExporter {
         });
         const bitrate = Math.max(500_000, (w * h * fps * 0.1) | 0);
         const config: VideoEncoderConfig = {
-          codec: 'avc1.42001f',
+          // Main Profile. Level 4.0 (0x28) for 1080p+, Level 3.1 (0x1f) for 720p.
+          // Level 3.1 max coded area is 921,600 — 1920x1080 = 2,073,600 exceeds it.
+          codec: w * h > 921600 ? 'avc1.4d0028' : 'avc1.4d001f',
           width: w,
           height: h,
           bitrate,
@@ -283,7 +285,7 @@ class BrowserWasmExporter {
         timestamp: timestampMicroseconds,
         duration: durationMicroseconds,
       });
-      this.nativeVideoEncoder.encode(frame, { keyFrame: frameIndex === 0 });
+      this.nativeVideoEncoder.encode(frame, { keyFrame: frameIndex % 30 === 0 });
       frame.close();
       bitmap.close();
     } else {
@@ -466,6 +468,8 @@ export interface BrowserRenderConfig {
     fps?: number;
     quality?: 'low' | 'medium' | 'high';
     range?: [number, number]; // [start, end] in seconds
+    /** Per-frame callback fired AFTER scene render but BEFORE exporter.handleFrame, so overlays (subtitles) drawn here are captured by the encoder. */
+    onFrame?: (canvas: HTMLCanvasElement, timeInSec: number, frame: number) => void;
     includeAudio?: boolean; // Enable audio processing
     downloadAudioSeparately?: boolean; // Download audio.wav separately
     onAudioReady?: (audioBlob: Blob) => void; // Callback when audio is ready
@@ -637,7 +641,14 @@ export const renderTwickVideoInBrowser = async (
     // PlaybackState: Playing = 0, Rendering = 1, Paused = 2, Presenting = 3
     (renderer as any).playback.state = 1;
     
-    const totalFrames = await renderer.getNumberOfFrames(renderSettings);
+    let totalFrames = await renderer.getNumberOfFrames(renderSettings);
+    // Clamp to range if provided — getNumberOfFrames ignores range and uses the
+    // scene's full duration (source file metadata). For cut videos the timeline
+    // is shorter than the source file.
+    if (renderSettings.range && isFinite(renderSettings.range[1])) {
+      const maxFramesFromRange = Math.ceil(renderSettings.range[1] * renderSettings.fps);
+      totalFrames = Math.min(totalFrames, maxFramesFromRange);
+    }
 
     if (totalFrames === 0 || !isFinite(totalFrames)) {
       console.error('[BrowserRender] renderTwickVideoInBrowser: invalid totalFrames', totalFrames);
@@ -674,14 +685,17 @@ export const renderTwickVideoInBrowser = async (
         // Load video metadata
         const preloadVideo = document.createElement('video');
         preloadVideo.crossOrigin = 'anonymous';
-        preloadVideo.preload = 'metadata';
+        preloadVideo.preload = 'auto';
         preloadVideo.src = src;
         await new Promise<void>((resolve, reject) => {
           const timeout = setTimeout(
             () => reject(new Error(`Timeout loading video metadata: ${src.substring(0, 80)}`)),
             30000
           );
-          preloadVideo.addEventListener('loadedmetadata', () => {
+          // Wait for canplay (first frame decoded + ready to play) instead of
+          // loadedmetadata (only duration/dimensions known). Guarantees the decoder
+          // has the first frame before rendering starts.
+          preloadVideo.addEventListener('canplay', () => {
             clearTimeout(timeout);
             resolve();
           }, { once: true });
@@ -706,6 +720,61 @@ export const renderTwickVideoInBrowser = async (
     await (renderer as any).playback.recalculate();
     await (renderer as any).playback.reset();
     await (renderer as any).playback.seek(0);
+    // Warm up: render frame 0 without exporting to let video sources decode.
+    // Without this, the first exported frame is black (video hasn't loaded yet).
+    await (renderer as any).stage.render(
+      (renderer as any).playback.currentScene,
+      (renderer as any).playback.previousScene
+    );
+    await (renderer as any).playback.progress();
+    await (renderer as any).playback.seek(0);
+    // Warm-up loop: render repeatedly until the canvas has non-black content.
+    // The scene's internal <video> element loads asynchronously. For uploaded videos
+    // via S3 presigned URLs, this can take 1-3 seconds on slow connections.
+    // We sample multiple points on the canvas to avoid false positives from
+    // videos with black regions (e.g., letterboxed content).
+    let warmupSuccess = false;
+    for (let warmup = 0; warmup < 60; warmup++) {
+      await (renderer as any).stage.render(
+        (renderer as any).playback.currentScene,
+        (renderer as any).playback.previousScene
+      );
+      await (renderer as any).playback.progress();
+      const warmupCanvas = (renderer as any).stage.finalBuffer;
+      if (warmupCanvas) {
+        const ctx = warmupCanvas.getContext("2d");
+        if (ctx) {
+          // Sample 5 points across the canvas (center, top-left area, bottom-right area, etc.)
+          const w = warmupCanvas.width;
+          const h = warmupCanvas.height;
+          const points = [
+            [Math.floor(w / 2), Math.floor(h / 3)],
+            [Math.floor(w / 3), Math.floor(h / 4)],
+            [Math.floor(w * 2 / 3), Math.floor(h / 2)],
+            [Math.floor(w / 4), Math.floor(h * 2 / 3)],
+            [Math.floor(w * 3 / 4), Math.floor(h * 3 / 4)],
+          ];
+          let hasContent = false;
+          for (const [px, py] of points) {
+            const sample = ctx.getImageData(px, py, 1, 1).data;
+            if (sample[0] > 5 || sample[1] > 5 || sample[2] > 5) {
+              hasContent = true;
+              break;
+            }
+          }
+          if (hasContent) {
+            warmupSuccess = true;
+            break;
+          }
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await (renderer as any).playback.seek(0);
+    }
+    if (!warmupSuccess) {
+      console.warn("[BrowserRender] Warm-up: video still black after 3s, proceeding anyway");
+    }
+    await (renderer as any).playback.seek(0);
 
     const mediaAssets: AssetInfo[][] = [];
     
@@ -725,6 +794,10 @@ export const renderTwickVideoInBrowser = async (
 
       // Same logic as render-server: get active GL effects for this frame from variables.input.tracks
       const activeEffects = getActiveEffectsForFrame(variables, frame, fps);
+      if (settings.onFrame) {
+        const timeInSec = frame / fps;
+        settings.onFrame(canvas, timeInSec, frame);
+      }
       await exporter.handleFrame(
         canvas,
         frame,
@@ -747,14 +820,48 @@ export const renderTwickVideoInBrowser = async (
 
     await exporter.stop();
 
-    // Inject standalone audio elements into mediaAssets per frame so getAssetPlacement includes them
-    if (audioElements.length > 0 && settings.includeAudio) {
+    // Replace scene-based video audio assets with explicit per-element entries.
+    // The scene's getMediaAssets() uses source URL as key, which merges split
+    // segments into one asset and plays the full uncut audio. Instead, rebuild
+    // audio data from the project's video + audio elements using element ID as
+    // key, ensuring each split segment is treated independently.
+    if (settings.includeAudio) {
+      // Clear scene-based assets (they have wrong keys for split videos)
       for (let frame = 0; frame < mediaAssets.length; frame++) {
-        const timeInSec = frame / fps;
-        for (const el of audioElements) {
-          const s = typeof el.s === 'number' ? el.s : 0;
-          const e = typeof el.e === 'number' ? el.e : Number.MAX_VALUE;
-          if (timeInSec >= s && timeInSec < e && el.props?.src) {
+        mediaAssets[frame] = [];
+      }
+      // Inject video element audio with element ID as key
+      for (const el of videoElements) {
+        const src = el.props?.src;
+        if (!src || src === 'undefined') continue;
+        const s = typeof el.s === 'number' ? el.s : 0;
+        const e = typeof el.e === 'number' ? el.e : Number.MAX_VALUE;
+        const playbackRate = el.props?.playbackRate ?? 1;
+        const volume = el.props?.volume ?? 1;
+        const trimStart = el.props?.time ?? 0;
+        for (let frame = 0; frame < mediaAssets.length; frame++) {
+          const timeInSec = frame / fps;
+          if (timeInSec >= s && timeInSec < e) {
+            const currentTime = (timeInSec - s) * playbackRate + trimStart;
+            (mediaAssets[frame] as AssetInfo[]).push({
+              key: el.id,
+              src,
+              type: 'video',
+              currentTime,
+              playbackRate,
+              volume,
+            });
+          }
+        }
+      }
+      // Inject audio elements
+      for (const el of audioElements) {
+        const s = typeof el.s === 'number' ? el.s : 0;
+        const e = typeof el.e === 'number' ? el.e : Number.MAX_VALUE;
+        if (!el.props?.src) continue;
+        for (let frame = 0; frame < mediaAssets.length; frame++) {
+          const timeInSec = frame / fps;
+          if (timeInSec >= s && timeInSec < e) {
             const playbackRate = el.props.playbackRate ?? 1;
             const volume = el.props.volume ?? 1;
             const trimStart = el.props.time ?? 0;
