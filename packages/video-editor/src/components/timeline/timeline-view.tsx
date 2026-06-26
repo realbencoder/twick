@@ -177,6 +177,25 @@ function TimelineView({
   const timelineWidth = Math.max(100, duration * zoomLevel * 100);
   const timelineWidthPx = `${timelineWidth}px`;
 
+  // Keep playhead centered when zoom changes
+  const prevZoomRef = useRef(zoomLevel);
+  useEffect(() => {
+    if (prevZoomRef.current !== zoomLevel && containerRef.current) {
+      const container = containerRef.current;
+      const viewportWidth = container.clientWidth;
+      // Calculate where the playhead is in the new zoom
+      const playheadPx = playheadPositionPx;
+      // Center the playhead in the viewport
+      const newScroll = Math.max(0, playheadPx - viewportWidth / 2);
+      container.scrollLeft = newScroll;
+      // Also sync the seek container
+      if (seekContainerRef.current) {
+        seekContainerRef.current.scrollLeft = newScroll;
+      }
+    }
+    prevZoomRef.current = zoomLevel;
+  }, [zoomLevel, playheadPositionPx]);
+
   // Sync scroll between seek container and timeline container
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const scrollPosition = e.currentTarget.scrollLeft;

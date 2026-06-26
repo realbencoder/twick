@@ -1,7 +1,7 @@
 import { PlayerManager } from "./player/player-manager";
 import TimelineManager from "./timeline/timeline-manager";
 import "../styles/video-editor.css";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import ControlManager from "./controls/control-manager";
 import {
   DEFAULT_TIMELINE_ZOOM_CONFIG,
@@ -109,6 +109,8 @@ export interface VideoEditorConfig {
   elementColors?: ElementColors;
   /** Frames per second for time display (MM:SS.FF format) */
   fps?: number;
+  /** External player component to replace LivePlayer (e.g. WebCodecs player) */
+  externalPlayer?: React.ReactNode;
 }
 
 /**
@@ -207,6 +209,25 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
   );
 
   const [trackZoom, setTrackZoom] = useState(zoomConfig.default);
+  const timelineSectionRef = useRef<HTMLDivElement>(null);
+
+  // Trackpad pinch-to-zoom: ctrlKey + wheel = pinch gesture on Mac
+  useEffect(() => {
+    const el = timelineSectionRef.current;
+    if (!el) return;
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const delta = -e.deltaY * 0.005;
+        setTrackZoom((prev: number) => {
+          const next = prev + delta * prev;
+          return Math.max(zoomConfig.min, Math.min(zoomConfig.max, next));
+        });
+      }
+    };
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [zoomConfig.min, zoomConfig.max]);
 
   const useMemoizedPlayerManager = useMemo(
     () => (
@@ -215,6 +236,7 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
         playerProps={editorConfig.playerProps}
         canvasMode={editorConfig.canvasMode ?? true}
         canvasConfig={editorConfig.canvasConfig}
+        externalPlayer={editorConfig.externalPlayer}
       />
     ),
     [editorConfig]
@@ -227,13 +249,14 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
         {rightPanel ? rightPanel : <div />}
       </div>
       {bottomPanel ? bottomPanel : null}
-      <div className="twick-editor-timeline-section">
+      <div className="twick-editor-timeline-section" ref={timelineSectionRef}>
         {defaultPlayControls ? (
           <ControlManager
             trackZoom={trackZoom}
             setTrackZoom={setTrackZoom}
             zoomConfig={zoomConfig}
             fps={editorConfig.fps}
+            skipRefreshCycle={!!editorConfig.externalPlayer}
           />
         ) : null}
 

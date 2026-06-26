@@ -5,6 +5,7 @@ import SeekControl from "../controls/seek-control";
 import TimelineView from "./timeline-view";
 import {
   ChapterMarker,
+  TRACK_TYPES,
   useTimelineContext,
   VALIDATION_ERROR_CODE,
   ValidationError,
@@ -66,7 +67,14 @@ const TimelineManager = ({
       const element = createElementFromDrop(type, url, videoResolution);
       element.setStart(timeSec);
 
-      const targetTrack = track ?? editor.addTrack(`Track_${Date.now()}`);
+      // If no target track, insert above video (after caption track)
+      let targetTrack = track;
+      if (!targetTrack) {
+        const _tlTracks = editor.getTimelineData()?.tracks || [];
+        const _tlCaptionIdx = _tlTracks.findIndex((t2: any) => t2.getType() === TRACK_TYPES.CAPTION);
+        const _tlInsertIdx = _tlCaptionIdx >= 0 ? _tlCaptionIdx + 1 : 0;
+        targetTrack = editor.addTrack(`Track_${Date.now()}`, undefined, _tlInsertIdx);
+      }
 
       const tryAdd = async (
         t: import("@twick/timeline").Track
@@ -82,7 +90,10 @@ const TimelineManager = ({
             err instanceof ValidationError &&
             err.errors?.includes(VALIDATION_ERROR_CODE.COLLISION_ERROR)
           ) {
-            const newTrack = editor.addTrack(`Track_${Date.now()}`);
+            const _collTracks = editor.getTimelineData()?.tracks || [];
+            const _collCaptionIdx = _collTracks.findIndex((t3: any) => t3.getType() === TRACK_TYPES.CAPTION);
+            const _collInsertIdx = _collCaptionIdx >= 0 ? _collCaptionIdx + 1 : 0;
+            const newTrack = editor.addTrack(`Track_${Date.now()}`, undefined, _collInsertIdx);
             return tryAdd(newTrack);
           }
           throw err;

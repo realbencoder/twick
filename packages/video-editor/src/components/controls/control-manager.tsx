@@ -12,15 +12,18 @@ const ControlManager = ({
   setTrackZoom,
   zoomConfig,
   fps,
+  skipRefreshCycle,
 }: {
   trackZoom: number;
   setTrackZoom: (zoom: number) => void;
   zoomConfig: TimelineZoomConfig;
   fps?: number;
+  /** When true, play goes directly Paused→Playing (no Refresh cycle). For external player. */
+  skipRefreshCycle?: boolean;
 }) => {
   const { currentTime, playerState, setSeekTime, setCurrentTime } =
     useLivePlayerContext();
-  const { togglePlayback } = usePlayerControl();
+  const { togglePlayback } = usePlayerControl(skipRefreshCycle);
   const {
     canRedo,
     canUndo,

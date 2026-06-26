@@ -47,7 +47,7 @@ export const DRAG_TYPE = {
   END: "end",
 } as const;
 
-export const DEFAULT_TIMELINE_ZOOM = 1.5;
+export const DEFAULT_TIMELINE_ZOOM = 0.5;
 
 /**
  * Default timeline zoom configuration including min, max, step, and default values.
@@ -63,14 +63,14 @@ export const DEFAULT_FPS = 30;
 export const SNAP_THRESHOLD_PX = 10;
 
 export const DEFAULT_TIMELINE_ZOOM_CONFIG = {
-  /** Minimum zoom level (10%) */
-  min: 0.1,
+  /** Minimum zoom level (1%) — allows fitting 10+ minute videos on screen */
+  min: 0.01,
   /** Maximum zoom level (300%) */
   max: 3.0,
   /** Zoom step increment/decrement (10%) */
   step: 0.1,
-  /** Default zoom level (150%) */
-  default: 1.5
+  /** Default zoom level (50%) */
+  default: 0.5
 };
 
 /**

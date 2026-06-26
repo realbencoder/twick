@@ -143,13 +143,18 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
 
   const handleZoomIn = useCallback(() => {
     if (setZoomLevel && zoomLevel < MAX_ZOOM) {
-      setZoomLevel(zoomLevel + ZOOM_STEP);
+      // Adaptive step: smaller steps at low zoom levels
+      const step = zoomLevel < 0.2 ? 0.02 : ZOOM_STEP;
+      setZoomLevel(Math.min(MAX_ZOOM, zoomLevel + step));
     }
   }, [zoomLevel, setZoomLevel]);
 
   const handleZoomOut = useCallback(() => {
     if (setZoomLevel && zoomLevel > MIN_ZOOM) {
-      setZoomLevel(zoomLevel - ZOOM_STEP);
+      // Adaptive step: smaller steps at low zoom levels
+      const step = zoomLevel <= 0.2 ? 0.02 : ZOOM_STEP;
+      const newZoom = Math.max(MIN_ZOOM, zoomLevel - step);
+      setZoomLevel(newZoom);
     }
   }, [zoomLevel, setZoomLevel]);
 

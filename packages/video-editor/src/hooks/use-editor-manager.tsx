@@ -1,6 +1,7 @@
 import { useLivePlayerContext } from "@twick/live-player";
 import {
   Track,
+  TRACK_TYPES,
   TrackElement,
   useTimelineContext,
   VALIDATION_ERROR_CODE,
@@ -50,6 +51,22 @@ export const useEditorManager = () => {
   const addElement = async (element: TrackElement) => {
     const currentTime = getCurrentTime();
     element.setStart(currentTime);
+
+    // Clamp element end to main video duration — prevents B-roll/images from
+    // extending the timeline beyond the actual video length
+    const tracks = editor.getTimelineData()?.tracks || [];
+    let mainVideoEnd = 0;
+    for (const t of tracks) {
+      for (const el of (t.getElements?.() || [])) {
+        if (el.getType?.() === 'video') {
+          mainVideoEnd = Math.max(mainVideoEnd, el.getEnd());
+        }
+      }
+    }
+    if (mainVideoEnd > 0 && element.getEnd() > mainVideoEnd) {
+      element.setEnd(mainVideoEnd);
+    }
+
     try {
       if (selectedItem instanceof Track) {
         const result = await editor.addElementToTrack(selectedItem, element);
@@ -57,7 +74,13 @@ export const useEditorManager = () => {
           setSelectedItem(element);
         }
       } else {
-        const newTrack = editor.addTrack(`Track_${Date.now()}`);
+        const tracks2 = editor.getTimelineData()?.tracks || [];
+        // Insert new overlay tracks just after caption track (index 0) — above all
+        // existing overlay tracks (B-roll images, B-roll video, other text).
+        // This ensures new elements always appear on top in the z-order.
+        const captionTrackIdx = tracks2.findIndex((t2: any) => t2.getType() === TRACK_TYPES.CAPTION);
+        const insertIdx = captionTrackIdx >= 0 ? captionTrackIdx + 1 : 0;
+        const newTrack = editor.addTrack(`Track_${Date.now()}`, undefined, insertIdx);
         const result = await editor.addElementToTrack(newTrack, element);
         if (result) {
           setSelectedItem(element);
@@ -67,7 +90,10 @@ export const useEditorManager = () => {
       if (error instanceof ValidationError) {
         if (error.errors.includes(VALIDATION_ERROR_CODE.COLLISION_ERROR)) {
           try {
-            const newTrack = editor.addTrack(`Track_${Date.now()}`);
+            const tracks2 = editor.getTimelineData()?.tracks || [];
+            const captionTrackIdx2 = tracks2.findIndex((t2: any) => t2.getType() === TRACK_TYPES.CAPTION);
+            const insertIdx = captionTrackIdx2 >= 0 ? captionTrackIdx2 + 1 : 0;
+            const newTrack = editor.addTrack(`Track_${Date.now()}`, undefined, insertIdx);
             const result = await editor.addElementToTrack(newTrack, element);
             if (result) {
               setSelectedItem(element);

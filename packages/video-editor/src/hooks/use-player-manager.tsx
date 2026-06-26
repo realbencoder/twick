@@ -4,6 +4,7 @@ import {
   ElementDeserializer,
   getCurrentElements,
   TIMELINE_ACTION,
+  TRACK_TYPES,
   useTimelineContext,
   type TrackElement,
 } from "@twick/timeline";
@@ -52,6 +53,7 @@ export const usePlayerManager = ({
   const currentChangeLog = useRef(changeLog);
   const prevSeekTime = useRef(0);
   const [playerUpdating, setPlayerUpdating] = useState(false);
+  const playerUpdatingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const updateCanvasRef = useRef<(seekTime: number, forceRefresh?: boolean) => void>(() => {});
 
   /**
@@ -160,7 +162,11 @@ export const usePlayerManager = ({
       const currentTime = getCurrentTime();
       element.setStart(currentTime);
 
-      const newTrack = editor.addTrack(`Track_${Date.now()}`);
+      // Insert above video track (after caption track) so overlays appear on top
+      const _dropTracks = editor.getTimelineData()?.tracks || [];
+      const _dropCaptionIdx = _dropTracks.findIndex((t2: any) => t2.getType() === TRACK_TYPES.CAPTION);
+      const _dropInsertIdx = _dropCaptionIdx >= 0 ? _dropCaptionIdx + 1 : 0;
+      const newTrack = editor.addTrack(`Track_${Date.now()}`, undefined, _dropInsertIdx);
       const result = await editor.addElementToTrack(newTrack, element);
       if (result) {
         setSelectedItem(element);
@@ -284,6 +290,10 @@ export const usePlayerManager = ({
    */
   const onPlayerUpdate = (event: CustomEvent) => {
     if (event?.detail?.status === "ready") {
+      if (playerUpdatingTimeoutRef.current) {
+        clearTimeout(playerUpdatingTimeoutRef.current);
+        playerUpdatingTimeoutRef.current = null;
+      }
       setPlayerUpdating(false);
       setTimelineAction(TIMELINE_ACTION.ON_PLAYER_UPDATED, null);
     }
@@ -294,7 +304,7 @@ export const usePlayerManager = ({
     for (const track of tracks) {
       const element = track.getElementById(elementId);
       if (element) {
-        editor.removeElement(element as TrackElement);
+        editor.rippleRemoveElement(element as TrackElement);
         currentChangeLog.current = currentChangeLog.current + 1;
         setSelectedItem(null);
         // Refresh canvas so the deleted element is removed from the canvas
@@ -308,11 +318,23 @@ export const usePlayerManager = ({
     switch (timelineAction.type) {
       case TIMELINE_ACTION.UPDATE_PLAYER_DATA:
         if (videoProps) {
-          if (
-            timelineAction.payload?.forceUpdate ||
-            editor.getLatestVersion() !== projectData?.input?.version
-          ) {
+          const latestVersion = editor.getLatestVersion();
+          const currentVersion = projectData?.input?.version;
+          const shouldUpdate = timelineAction.payload?.forceUpdate || latestVersion !== currentVersion;
+          console.log('[PlayerManager] UPDATE_PLAYER_DATA received —',
+            'shouldUpdate:', shouldUpdate,
+            'forceUpdate:', !!timelineAction.payload?.forceUpdate,
+            'latestVersion:', latestVersion, 'currentVersion:', currentVersion,
+            'tracks:', timelineAction.payload?.tracks?.length ?? 0);
+          if (shouldUpdate) {
             setPlayerUpdating(true);
+            if (playerUpdatingTimeoutRef.current) {
+              clearTimeout(playerUpdatingTimeoutRef.current);
+            }
+            playerUpdatingTimeoutRef.current = setTimeout(() => {
+              setPlayerUpdating(false);
+              playerUpdatingTimeoutRef.current = null;
+            }, 3000);
             const _latestProjectData = {
               input: {
                 properties: videoProps,
@@ -322,13 +344,10 @@ export const usePlayerManager = ({
                   timelineAction.payload?.backgroundColor ?? "#000000",
               },
             };
+            console.log('[PlayerManager] Setting new projectData, version:', _latestProjectData.input.version);
             setProjectData(_latestProjectData);
-            if (timelineAction.payload?.version === 1) {
-              setTimeout(() => {
-                setPlayerUpdating(false);
-              });
-            }
           } else {
+            console.log('[PlayerManager] Version matches, skipping → ON_PLAYER_UPDATED');
             setTimelineAction(TIMELINE_ACTION.ON_PLAYER_UPDATED, null);
           }
         }

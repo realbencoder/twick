@@ -126,9 +126,63 @@ export const useTimelineManager = (): TimelineManagerReturn => {
         }
       }
     }
+    // Clamp end handle drags:
+    // - Main video: clamp to file duration (can't extend past actual source video)
+    // - Overlays: clamp to timeline duration (can't extend past video end)
+    let clampedEnd = updates.end;
+    if (dragType === DRAG_TYPE.END) {
+      const _elTrack = editor.getTrackById(element.getTrackId());
+      const _isMainVideo = _elTrack && _elTrack.getType() === TRACK_TYPES.VIDEO;
+      if (_isMainVideo) {
+        // Main video: clamp to actual file duration if available
+        const _props: any = element.getProps?.() ?? {};
+        const _fileDur = _props.fileDuration;
+        const _startAt = _props.time ?? _props.startAt ?? 0;
+        if (_fileDur && _fileDur > 0) {
+          const maxEnd = updates.start + (_fileDur - _startAt);
+          if (clampedEnd > maxEnd) clampedEnd = maxEnd;
+        }
+      } else if (totalDuration > 0 && clampedEnd > totalDuration) {
+        clampedEnd = totalDuration;
+      }
+    }
     editor.updateElements([
-      { elementId: element.getId(), updates: { s: updates.start, e: updates.end } },
+      { elementId: element.getId(), updates: { s: updates.start, e: clampedEnd } },
     ]);
+    // When shortening a video element's end, trim/remove subtitle elements past the new video end.
+    // Subtitles are time-synced to the video — if the video is shorter, subtitles past the end
+    // should not remain on the timeline.
+    if (dragType === DRAG_TYPE.END && (element instanceof VideoElement)) {
+      const allTracks = editor.getTimelineData()?.tracks ?? [];
+      // Find the new max end across all video elements
+      let maxVideoEnd = 0;
+      for (const t of allTracks) {
+        if (t.getType() === TRACK_TYPES.VIDEO) {
+          for (const el of t.getElements()) {
+            const elEnd = el.getEnd();
+            if (elEnd > maxVideoEnd) maxVideoEnd = elEnd;
+          }
+        }
+      }
+      if (maxVideoEnd > 0) {
+        for (const t of allTracks) {
+          if (t.getType() !== TRACK_TYPES.CAPTION) continue;
+          const friend = t.createFriend();
+          for (const el of t.getElements()) {
+            if (el.getStart() >= maxVideoEnd) {
+              // Entirely past video end — remove
+              friend.removeElement(el);
+            } else if (el.getEnd() > maxVideoEnd) {
+              // Partially overlapping — trim to video end + adjust word timing
+              const prevStart = el.getStart();
+              const prevEnd = el.getEnd();
+              el.setEnd(maxVideoEnd);
+              editor.adjustCaptionWordsForTimeChange(el, prevStart, prevEnd);
+            }
+          }
+        }
+      }
+    }
     setSelectedItem(element);
     editor.refresh();
   };

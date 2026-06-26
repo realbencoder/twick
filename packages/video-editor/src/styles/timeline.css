@@ -135,15 +135,31 @@
 
 .twick-track-element-handle {
   position: absolute;
-  width: 2px;
+  width: 6px;
   height: 60%;
   cursor: ew-resize;
-  transition: background-color 0.2s ease-in-out;
+  transition: background-color 0.2s ease-in-out, width 0.15s ease;
   top: 50%;
   transform: translate(-50%, -50%);
   background-color: #FFFFFF;
   border-radius: 25%;
   z-index: 10;
+}
+
+/* Expanded invisible hit zone — cursor stays ew-resize */
+.twick-track-element-handle::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  left: -8px;
+  right: -8px;
+  cursor: ew-resize;
+}
+
+.twick-track-element-handle:hover {
+  width: 8px;
+  background-color: #f97316;
 }
 
 .twick-track-element-handle-start {

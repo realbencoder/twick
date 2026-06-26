@@ -139,7 +139,8 @@ export function useMarqueeSelection({
     (e: React.MouseEvent<HTMLDivElement>) => {
       if (
         (e.target as HTMLElement).closest(".twick-track-element") ||
-        (e.target as HTMLElement).closest(".twick-track-header")
+        (e.target as HTMLElement).closest(".twick-track-header") ||
+        (e.target as HTMLElement).closest(".twick-seek-track")
       ) {
         return;
       }

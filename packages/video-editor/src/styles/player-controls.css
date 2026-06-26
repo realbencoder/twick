@@ -3,26 +3,29 @@
 
 /* Player Controls */
 .player-controls {
-  height: 3rem;
+  min-height: 2.5rem;
   background-color: #141419;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
-  padding: 0 0.5rem;
+  padding: 0 0.25rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  overflow: visible;
 }
 
 /* Edit Controls */
 .edit-controls {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.25rem;
 }
 
 .playback-controls {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.25rem;
 }
 
 /* Control Buttons */
