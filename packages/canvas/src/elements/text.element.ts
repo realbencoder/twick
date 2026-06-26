@@ -24,6 +24,8 @@ export const TextElement: CanvasElementHandler = {
       context.canvasMetadata,
       context.videoSize
     );
+    const videoWidth = (object.width ?? 0) * (object.scaleX ?? 1) / context.canvasMetadata.scaleX;
+    const videoFontSize = Math.round((object.fontSize ?? 36) / context.canvasMetadata.scaleX);
     return {
       element: {
         ...element,
@@ -32,6 +34,8 @@ export const TextElement: CanvasElementHandler = {
           rotation: getObjectCanvasAngle(object),
           x,
           y,
+          width: videoWidth,
+          fontSize: videoFontSize,
         },
       },
     };

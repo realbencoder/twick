@@ -133,8 +133,9 @@ export const getThumbnail = async (
           reject(new Error("Video loading timed out"));
         }, 15000);
     
-        // Assign video source and add it to the DOM (helps Safari/iOS behavior)
+        // Assign video source and explicitly trigger loading
         video.src = videoUrl;
+        video.load(); // Force browser to begin loading immediately
         document.body.appendChild(video);
       };
 

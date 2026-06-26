@@ -27,17 +27,28 @@ export const CaptionElement: CanvasElementHandler = {
       context.canvasMetadata,
       context.videoSize
     );
+    // Convert display-space values back to video-space
+    const videoWidth = (object.width ?? 0) * (object.scaleX ?? 1) / context.canvasMetadata.scaleX;
+    // fontSize on the Fabric object is in display pixels — convert back to video pixels
+    const videoFontSize = Math.round((object.fontSize ?? 48) / context.canvasMetadata.scaleX);
+
     const useTrackDefaults = (element.props as any)?.useTrackDefaults ?? true;
     if (useTrackDefaults) {
+      const currentProps = (context.captionPropsRef.current ?? {}) as Record<string, any>;
       return {
         element,
         operation: CANVAS_OPERATIONS.CAPTION_PROPS_UPDATED,
         payload: {
           element,
           props: {
-            ...context.captionPropsRef.current,
+            ...currentProps,
             x,
             y,
+            width: videoWidth,
+            font: {
+              ...(currentProps.font ?? {}),
+              size: videoFontSize,
+            },
           },
         },
       };
@@ -49,6 +60,11 @@ export const CaptionElement: CanvasElementHandler = {
           ...element.props,
           x,
           y,
+          width: videoWidth,
+          font: {
+            ...((element.props as any)?.font ?? {}),
+            size: videoFontSize,
+          },
         },
       },
     };

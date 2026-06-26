@@ -270,6 +270,9 @@ export const useTwickCanvas = ({
       if (scaleX !== 1) {
         const newFontSize = Math.round((target.fontSize ?? 20) * scaleX);
         target.set("fontSize", Math.max(8, Math.min(120, newFontSize)));
+        // Bake scale into width so the text box grows/shrinks with the resize
+        const newWidth = (target.width ?? 100) * scaleX;
+        target.set("width", newWidth);
         target.set("scaleX", 1);
         target.set("scaleY", 1);
         target.setCoords();
@@ -557,7 +560,10 @@ export const useTwickCanvas = ({
         uniqueElements.map(async (element, index) => {
           try {
             if (!element) return;
-            const zOrder = element.zIndex ?? index;
+            // Twick z-order: lower track index = renders on top.
+            // Fabric.js z-order: higher zIndex = renders on top.
+            // Invert: first element (track 0) gets highest zIndex.
+            const zOrder = element.zIndex ?? (uniqueElements.length - 1 - index);
             await addElementToCanvas({
               element,
               index: zOrder,

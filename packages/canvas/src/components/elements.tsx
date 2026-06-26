@@ -270,11 +270,6 @@ export const addCaptionElement = ({
     canvasMetadata
   );
 
-  let width = element.props?.width ? element.props.width * canvasMetadata.scaleX : canvasMetadata.width - (2 * MARGIN);
-  if (element.props?.maxWidth) {
-    width = Math.min(width, element.props.maxWidth * canvasMetadata.scaleX);
-  }
-
   const resolvedFill =
     ((useTrackDefaults ? undefined : element.props?.fill) ?? captionTextColor) ??
     DEFAULT_CAPTION_PROPS.fill;
@@ -291,21 +286,44 @@ export const addCaptionElement = ({
   const elementFont = (element.props as any)?.font ?? {};
   const resolvedFont = useTrackDefaults ? trackFont : { ...trackFont, ...elementFont };
 
+  const resolvedFontSize = Math.round(
+    ((resolvedFont?.size ?? DEFAULT_CAPTION_PROPS.size) * canvasMetadata.scaleX)
+  );
+  const resolvedFontFamily = resolvedFont?.family ?? DEFAULT_CAPTION_PROPS.family;
+  const resolvedFontWeight = resolvedFont?.weight ?? DEFAULT_CAPTION_PROPS.fontWeight;
+
+  let width: number;
+  if (element.props?.width != null && element.props.width > 0) {
+    width = element.props.width * canvasMetadata.scaleX;
+  } else {
+    // Measure actual text width so selection box fits the text (not full canvas width)
+    const textContent = element.props?.text || element.t || "";
+    const measured = measureTextWidth(textContent, {
+      fontSize: resolvedFontSize,
+      fontFamily: resolvedFontFamily,
+      fontWeight: String(resolvedFontWeight),
+    });
+    const padding = 20;
+    width = measured + padding * 2;
+    // Clamp: at least 20% of canvas, at most canvas width minus margin
+    const minWidth = canvasMetadata.width * 0.2;
+    const maxWidth = canvasMetadata.width - (2 * MARGIN);
+    width = Math.max(minWidth, Math.min(maxWidth, width));
+  }
+  if (element.props?.maxWidth) {
+    width = Math.min(width, element.props.maxWidth * canvasMetadata.scaleX);
+  }
+
   const caption = new Textbox(element.props?.text || element.t || "", {
     left: x,
     top: y,
     originX: "center",
     originY: "center",
     angle: element.props?.rotation || 0,
-    fontSize: Math.round(
-      ((resolvedFont?.size ?? DEFAULT_CAPTION_PROPS.size) *
-        canvasMetadata.scaleX)
-    ),
-    fontFamily:
-      (resolvedFont?.family ?? DEFAULT_CAPTION_PROPS.family),
+    fontSize: resolvedFontSize,
+    fontFamily: resolvedFontFamily,
     fill: resolvedFill,
-    fontWeight:
-      (resolvedFont?.weight ?? DEFAULT_CAPTION_PROPS.fontWeight),
+    fontWeight: resolvedFontWeight,
     ...(resolvedStroke ? { stroke: resolvedStroke } : {}),
     opacity: (((useTrackDefaults ? undefined : element.props?.opacity) ?? captionProps?.opacity) ?? 1),
     width,
