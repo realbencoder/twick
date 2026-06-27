@@ -486,31 +486,17 @@ export class TimelineEditor {
           const elStart = el.getStart();
           const elEnd = el.getEnd();
 
-          // Caption fully inside the gap — mark for removal
-          if (isCaptionTrack && isVideoTrack && elStart >= gapStart && elEnd <= gapEnd) {
-            elementsToRemove.push(el);
-            continue;
-          }
-          // Caption overlaps gap start — trim its end
-          if (isCaptionTrack && isVideoTrack && elStart < gapStart && elEnd > gapStart && elEnd <= gapEnd) {
-            el.setEnd(gapStart);
-            this.adjustCaptionWordsForTimeChange(el, elStart, elEnd);
-            continue;
-          }
-          // Caption overlaps gap end — trim its start and shift
-          if (isCaptionTrack && isVideoTrack && elStart >= gapStart && elStart < gapEnd && elEnd > gapEnd) {
-            const prevStart = elStart;
-            const prevEnd = elEnd;
-            el.setStart(gapStart);
-            el.setEnd(prevEnd - gapDuration);
-            this.adjustCaptionWordsForTimeChange(el, prevStart, prevEnd);
-            continue;
-          }
-          // Caption spans entire gap — trim out the gap duration
-          if (isCaptionTrack && isVideoTrack && elStart < gapStart && elEnd > gapEnd) {
-            const prevEnd = elEnd;
-            el.setEnd(prevEnd - gapDuration);
-            this.adjustCaptionWordsForTimeChange(el, elStart, prevEnd);
+          // Caption OVERLAPPING the removed region — word-level cut: DROP the words whose
+          // timestamps fall inside [gapStart, gapEnd], keep words before it unchanged, shift words
+          // after it left; remove the caption only if NO word survives. Replaces the four old
+          // trim/remove branches that called adjustCaptionWordsForTimeChange, which squeezed EVERY
+          // word into the smaller window (losing/mangling the real words when a mistimed caption
+          // straddled a cut — e.g. cutting dead-space at the start). Captions entirely BEFORE the
+          // cut fall through unchanged; entirely AFTER, they shift below (the existing path) — both
+          // left exactly as they were.
+          if (isCaptionTrack && isVideoTrack && elStart < gapEnd && elEnd > gapStart) {
+            const { survived } = this.applyCutToCaption(el, gapStart, gapEnd);
+            if (!survived) elementsToRemove.push(el);
             continue;
           }
           // Element starts after the gap — shift left to close it. Skip for a caption-on-caption
@@ -1267,6 +1253,99 @@ export class TimelineEditor {
       (metadata as Record<string, unknown>).wordsMs = newWordsMs;
       element.setMetadata(metadata);
     }
+  }
+
+  /**
+   * Cut the time region [gapStart, gapEnd] (seconds) out of a caption at the WORD level: DROP the
+   * words whose timestamps fall inside the cut, keep words before it unchanged, and shift words
+   * after it left by the removed duration; then set the caption's new bounds. Returns
+   * { survived:false } (the caller removes the element) when NO word survives the cut.
+   *
+   * Unlike adjustCaptionWordsForTimeChange — which shifts/scales ALL words into the new window —
+   * this drops the in-cut words, so cutting dead-space near a mistimed caption keeps the real words
+   * instead of squeezing/losing the whole group. Also correctly handles captions entirely before
+   * the cut (unchanged) and entirely after it (shifted), so one call covers every case.
+   */
+  private applyCutToCaption(
+    element: TrackElement,
+    gapStart: number,
+    gapEnd: number
+  ): { survived: boolean } {
+    if (element.getType().toLowerCase() !== "caption") return { survived: true };
+    const gapDuration = gapEnd - gapStart;
+    if (!(gapDuration > 0)) return { survived: true };
+
+    const origStart = element.getStart();
+    const origEnd = element.getEnd();
+    // New bounds: remove [gapStart, gapEnd], pulling content after the gap left.
+    const cutBound = (t: number): number =>
+      t <= gapStart ? t : t >= gapEnd ? t - gapDuration : gapStart;
+    let newStart = cutBound(origStart);
+    let newEnd = cutBound(origEnd);
+    if (newEnd < newStart + 0.01) newEnd = newStart + 0.01; // editor min-duration
+
+    const props = element.getProps() ?? {};
+    const metadata = element.getMetadata() ?? {};
+    const propsWords = (props as Record<string, unknown>).wordsMs;
+    const metaWords = (metadata as Record<string, unknown>).wordsMs;
+    const hasPropsWords = Array.isArray(propsWords) && (propsWords as unknown[]).length > 0;
+    const hasMetaWords = Array.isArray(metaWords) && (metaWords as unknown[]).length > 0;
+
+    const text = (element as any).getText?.() ?? "";
+    const tokens = String(text)
+      .split(" ")
+      .map((w) => w.trim())
+      .filter((w) => w.length > 0);
+    const refWords = (hasPropsWords ? propsWords : hasMetaWords ? metaWords : null) as
+      | number[]
+      | null;
+
+    // No per-word timing, or a length we can't safely map → fall back to the length-preserving
+    // bounds adjust (today's behavior; never worse, and it can't lose specific words).
+    if (!refWords || refWords.length !== tokens.length) {
+      element.setStart(newStart);
+      element.setEnd(newEnd);
+      this.adjustCaptionWordsForTimeChange(element, origStart, origEnd);
+      return { survived: true };
+    }
+
+    // Detect seconds-vs-ms like the compositor (legacy projects can store seconds). Compare in ms;
+    // write back in the array's stored unit so a saved project is never double-converted.
+    const maxVal = Math.max(...refWords);
+    const isSeconds = maxVal > 0 && maxVal < origEnd * 2;
+    const toMs = (v: number) => (isSeconds ? v * 1000 : v);
+    const fromMs = (v: number) => (isSeconds ? v / 1000 : v);
+    const gapStartMs = gapStart * 1000;
+    const gapEndMs = gapEnd * 1000;
+    const gapDurMs = gapDuration * 1000;
+
+    // Survivors = words OUTSIDE [gapStart, gapEnd). props and metadata carry the same per-word
+    // timings, so the same surviving indices apply to both.
+    const keepIdx: number[] = [];
+    for (let i = 0; i < refWords.length; i++) {
+      const wMs = toMs(refWords[i]);
+      if (wMs < gapStartMs || wMs >= gapEndMs) keepIdx.push(i);
+    }
+    if (keepIdx.length === 0) return { survived: false };
+
+    const transform = (arr: number[]): number[] =>
+      keepIdx.map((i) => {
+        const wMs = toMs(arr[i]);
+        return wMs < gapStartMs ? arr[i] : fromMs(wMs - gapDurMs);
+      });
+
+    (element as any).setText?.(keepIdx.map((i) => tokens[i]).join(" "));
+    if (hasPropsWords) {
+      (props as Record<string, unknown>).wordsMs = transform(propsWords as number[]);
+      element.setProps(props);
+    }
+    if (hasMetaWords) {
+      (metadata as Record<string, unknown>).wordsMs = transform(metaWords as number[]);
+      element.setMetadata(metadata);
+    }
+    element.setStart(newStart);
+    element.setEnd(newEnd);
+    return { survived: true };
   }
 
   /**
