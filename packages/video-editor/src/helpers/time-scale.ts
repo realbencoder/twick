@@ -58,9 +58,14 @@ export function createTimeScale(
   labelWidth: number = LABEL_WIDTH
 ): TimeScale {
   const timelineWidth = Math.max(MIN_TIMELINE_WIDTH, duration * zoom * BASE_PX_PER_SEC);
-  const contentWidth = Math.max(1, timelineWidth - labelWidth);
+  // The clip track (.twick-track) is `timelineWidth` wide — the 40px label is a SEPARATE sticky DOM
+  // element, NOT a width subtraction. Clips position via % of that FULL width, so the ruler/playhead
+  // must map across the same full width or the ruler ends 40px short and clips hang off the right end
+  // (the regression a prior version caused by subtracting labelWidth here). contentWidth == timelineWidth;
+  // pxPerSec == 100*zoom. The 40px offset is applied separately via timeToContentX (+labelWidth).
+  const contentWidth = timelineWidth;
   const safeDuration = Math.max(duration, 1e-6);
-  const pxPerSec = contentWidth / safeDuration; // === the clip frame
+  const pxPerSec = contentWidth / safeDuration; // === 100*zoom === the clip frame (.twick-track width / duration)
   const trackStride = TRACK_HEIGHT + SEPARATOR_HEIGHT;
   return {
     pxPerSec,
