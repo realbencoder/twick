@@ -67,6 +67,7 @@ const TrackBase = memo(({
           onDragStateChange={onDragStateChange}
           elementColors={elementColors}
           getSnapTargets={getSnapTargets}
+          isMainVideoTrack={track.getName?.() === "Video"}
           nextStart={
             index < elements.length - 1
               ? elements[index + 1].getStart()

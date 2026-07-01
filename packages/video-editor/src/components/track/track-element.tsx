@@ -16,6 +16,7 @@ import {
   pxToSecThreshold,
 } from "@twick/timeline";
 import { ElementColors } from "../../helpers/types";
+import { drawClipWaveform, getTimelineWaveform } from "../../helpers/waveform-render";
 import "../../styles/timeline.css";
 
 // Thumbnail cache keyed by SOURCE (not element id) so split-clone siblings sharing a src reuse one
@@ -55,6 +56,13 @@ interface TrackElementViewProps {
    * Optional: when omitted, dragging behaves exactly as before (no snapping).
    */
   getSnapTargets?: (excludeElementId: string) => number[];
+  /**
+   * True when this element lives on the MAIN "Video" track (the recording itself — its audio is
+   * embedded in the video element; there is no separate main-audio track). Gates the waveform
+   * strip: the app-registered waveform (window.__twick_waveform) describes the main recording's
+   * audio only, so B-roll/overlay video elements must never draw it.
+   */
+  isMainVideoTrack?: boolean;
 }
 
 // Memoized (see track-base): a clip is independent of the playhead tick, so with stable props from
@@ -75,6 +83,7 @@ export const TrackElementView = memo(({
   onDragStateChange,
   elementColors,
   getSnapTargets,
+  isMainVideoTrack = false,
 }: TrackElementViewProps) => {
   const ref = useRef<HTMLDivElement>(null);
   const dragType = useRef<string | null>(null);
@@ -168,6 +177,43 @@ export const TrackElementView = memo(({
       end: element.getEnd(),
     });
   }, [element.getStart(), element.getEnd(), parentWidth, duration]);
+
+  // Waveform strip (MAIN video clips only) — draws this clip's SOURCE slice of the app-registered
+  // waveform (window.__twick_waveform) as mirrored bars along the bottom of the clip. Split-aware:
+  // the slice starts at props.time (source offset), so a split/trimmed clip shows ITS audio, not
+  // the start of the file. Redraws on trim/drag/zoom via the position/parentWidth deps (cheap —
+  // a few hundred rects). If the app registers the waveform AFTER mount (async video load), the
+  // 'twick-waveform-ready' event triggers the first paint.
+  const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
+  const showWaveform = isMainVideoTrack && element.getType() === "video";
+  useEffect(() => {
+    if (!showWaveform) return;
+    const canvas = waveformCanvasRef.current;
+    if (!canvas) return;
+    const draw = () => {
+      const wf = getTimelineWaveform();
+      if (!wf) return false;
+      const props = (element as any).getProps?.() ?? {};
+      const srcStart = Number(props.time) || 0;
+      const rate = Number(props.playbackRate) || 1;
+      const srcSpan = Math.max(0, (position.end - position.start) * rate);
+      // Cap DPR at 2 — retina-crisp without 3x-display overdraw on a long timeline of clips.
+      const dpr = Math.min(2, (typeof window !== "undefined" && window.devicePixelRatio) || 1);
+      return drawClipWaveform(canvas, wf, {
+        srcStart,
+        srcSpan,
+        cssWidth: canvas.clientWidth,
+        cssHeight: canvas.clientHeight,
+        dpr,
+      });
+    };
+    if (draw()) return;
+    const onReady = () => {
+      draw();
+    };
+    window.addEventListener("twick-waveform-ready", onReady);
+    return () => window.removeEventListener("twick-waveform-ready", onReady);
+  }, [showWaveform, element.getId(), position.start, position.end, parentWidth, duration]);
 
   // Snaps a candidate edge time (seconds) to the nearest timeline target within SNAP_THRESHOLD_PX,
   // measured in the CURRENT zoom (pixelsPerSecond = parentWidth / duration). Returns the input
@@ -403,6 +449,20 @@ export const TrackElementView = memo(({
   return (
     <motion.div {...motionProps}>
       <div style={{ touchAction: "none", height: "100%" }} {...bind()}>
+        {showWaveform ? (
+          <canvas
+            ref={waveformCanvasRef}
+            style={{
+              position: "absolute",
+              left: 0,
+              bottom: 0,
+              width: "100%",
+              height: "46%",
+              pointerEvents: "none",
+              zIndex: 0,
+            }}
+          />
+        ) : null}
         {hasHandles ? (
           <div
             style={{ touchAction: "none" , zIndex: isSelected? 100 : 1}}
