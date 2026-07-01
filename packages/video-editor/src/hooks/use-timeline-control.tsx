@@ -64,28 +64,14 @@ const useTimelineControl = () => {
    * ```
    */
   const splitElement = async (element: TrackElement, currentTime: number) => {
-    console.log('[TimelineControl] splitElement called at time:', currentTime,
-      'element:', element.getId(), 'start:', element.getStart(), 'end:', element.getEnd());
-    const result = await editor.splitElement(element, currentTime);
-    console.log('[TimelineControl] splitElement result:', result?.success,
-      'first:', result?.firstElement?.getId(), 'second:', result?.secondElement?.getId());
+    // Split the element AND cascade to spanning captions as ONE atomic undo step. A video cut splits
+    // the captions sitting on top of it (so they stay in sync); a single Cmd+Z must reverse the whole
+    // thing. The old code looped editor.splitElement per caption, each snapshotting history, so undo
+    // only reversed the last caption split (video stayed cut). See splitElementWithCaptionCascade.
+    const result = await editor.splitElementWithCaptionCascade(element, currentTime);
     // Select the first piece so timeline doesn't zoom to nothing
     if (result?.success && result?.firstElement) {
       setSelectedItem(result.firstElement);
-      // Cascade split to caption elements that span the cut point
-      if (element.getType().toLowerCase() === 'video') {
-        const allTracks = editor.getTimelineData()?.tracks ?? [];
-        for (const trk of allTracks) {
-          if (trk.getType() === 'caption') {
-            const caps = [...trk.getElements()];
-            for (const cap of caps) {
-              if (cap.getStart() < currentTime && cap.getEnd() > currentTime) {
-                await editor.splitElement(cap, currentTime);
-              }
-            }
-          }
-        }
-      }
     }
     // Force-pause all media elements after split to prevent audio leak
     if (typeof document !== 'undefined') {

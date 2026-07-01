@@ -126,7 +126,10 @@ export const getCurrentElements = (
  * ```
  */
 export const canSplitElement = (element: TrackElement, currentTime: number) => {
-  return element.getStart() <= currentTime && element.getEnd() >= currentTime;
+  // Strict on BOTH ends: a split exactly on an element's start or end produces a zero-length sliver
+  // (the validator then inflates it to a 0.01s ghost clip, which also flips the video to server
+  // render). Symmetric with getCurrentElements, which already uses `getEnd() > currentTime`.
+  return element.getStart() < currentTime && element.getEnd() > currentTime;
 };
 
 /**

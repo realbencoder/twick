@@ -115,9 +115,12 @@ export const useTimelineManager = (): TimelineManagerReturn => {
     if (dragType === DRAG_TYPE.START) {
       if (element instanceof VideoElement || element instanceof AudioElement) {
         const elementProps = element.getProps();
+        // Convert the timeline-delta of the START edge into a source-in-point delta. MUST parenthesize
+        // the subtraction: `a - b * rate` reads as `a - (b*rate)` and mis-trims sped-up/slowed clips
+        // (rate ≠ 1). Correct form is `(start - getStart()) * rate` (matches ElementSplitter's math).
         const delta =
-          updates.start -
-          element.getStart() * (elementProps?.playbackRate || 1);
+          (updates.start - element.getStart()) *
+          (elementProps?.playbackRate || 1);
 
         if (element instanceof AudioElement) {
           (element as AudioElement).setStartAt(element.getStartAt() + delta);

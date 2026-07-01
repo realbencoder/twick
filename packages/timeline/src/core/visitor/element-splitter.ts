@@ -94,26 +94,30 @@ export class ElementSplitter implements ElementVisitor<SplitResult> {
     const originalTextArray = originalText.split(" ");
     const percentage =
       (this.splitTime - element.getStart()) / element.getDuration();
+    // A single-word (or empty) text overlay can't split into two non-empty halves — leave it whole
+    // rather than emit an empty-text element that renders nothing for its window (mirrors the caption
+    // path below).
+    if (originalTextArray.length < 2) {
+      return { firstElement: null, secondElement: null, success: false };
+    }
+    // Clamp so NEITHER half is empty: a cut inside the first word's time-fraction would give index 0
+    // (empty first), inside the last word's fraction index === length (empty second). Keep both >= 1.
+    const splitWordIndex = Math.max(
+      1,
+      Math.min(
+        originalTextArray.length - 1,
+        Math.floor(originalTextArray.length * percentage)
+      )
+    );
     const firstElement = this.elementCloner.visitTextElement(
       element
     ) as TextElement;
-    firstElement.setText(
-      originalTextArray
-        .slice(0, Math.floor(originalTextArray.length * percentage))
-        .join(" ")
-    );
+    firstElement.setText(originalTextArray.slice(0, splitWordIndex).join(" "));
     firstElement.setEnd(this.splitTime);
     const secondElement = this.elementCloner.visitTextElement(
       element
     ) as TextElement;
-    secondElement.setText(
-      originalTextArray
-        .slice(
-          Math.floor(originalTextArray.length * percentage),
-          originalTextArray.length
-        )
-        .join(" ")
-    );
+    secondElement.setText(originalTextArray.slice(splitWordIndex).join(" "));
     secondElement.setStart(this.splitTime);
     return { firstElement, secondElement, success: true };
   }

@@ -567,7 +567,80 @@ export class TimelineEditor {
     if (!track) {
       return { firstElement: element, secondElement: null, success: false };
     }
+    const result = await this.splitElementNoCommit(element, track, splitTime);
+    if (result.success) {
+      // Single trailing commit = the sole undo snapshot for this split.
+      const currentData = this.getTimelineData();
+      if (currentData) {
+        this.setTimelineData({ tracks: currentData.tracks, updatePlayerData: true });
+      }
+    }
+    return result;
+  }
 
+  /**
+   * Split a VIDEO element AND cascade the split to every caption spanning the cut point, as ONE
+   * atomic undo step. Previously the caller looped `editor.splitElement(cap, …)` per caption and each
+   * call snapshotted history, so a cut over N captions became N+1 undo entries and a single Cmd+Z
+   * only reversed the last caption split (the video stayed cut — the exact class the cut-core work
+   * fixed). This mirrors rippleRemoveElement: every split is a NO-COMMIT mutation, and one trailing
+   * setTimelineData is the sole snapshot for the whole cut.
+   */
+  async splitElementWithCaptionCascade(
+    element: TrackElement,
+    splitTime: number
+  ): Promise<SplitResult> {
+    const track = this.getTrackById(element.getTrackId());
+    if (!track) {
+      return { firstElement: element, secondElement: null, success: false };
+    }
+    const primary = await this.splitElementNoCommit(element, track, splitTime);
+    if (!primary.success) {
+      // Nothing was committed (no setTimelineData), so there is no half-done state to undo.
+      return primary;
+    }
+
+    // Cascade to captions only when the MAIN VIDEO element was split (captions ride the video
+    // timeline). Gate on BOTH the track type AND the element type — this matches the pre-refactor
+    // `element.getType()==='video'` check exactly, so an image parked on a video-typed track can
+    // never trigger the caption cascade.
+    if (
+      track.getType() === TRACK_TYPES.VIDEO &&
+      element.getType().toLowerCase() === "video"
+    ) {
+      const currentData = this.getTimelineData();
+      if (currentData) {
+        for (const trk of currentData.tracks) {
+          if (trk.getType() !== TRACK_TYPES.CAPTION) continue;
+          for (const cap of [...trk.getElements()]) {
+            // Strict bounds: only captions that genuinely span the cut (not touching an edge).
+            if (cap.getStart() < splitTime && cap.getEnd() > splitTime) {
+              await this.splitElementNoCommit(cap, trk, splitTime);
+            }
+          }
+        }
+      }
+    }
+
+    // ONE trailing commit for the video split + all caption splits = a single undo entry.
+    const committed = this.getTimelineData();
+    if (committed) {
+      this.setTimelineData({ tracks: committed.tracks, updatePlayerData: true });
+    }
+    return primary;
+  }
+
+  /**
+   * Split a single element on its track WITHOUT committing (no setTimelineData / no history snapshot).
+   * The caller MUST issue exactly one trailing setTimelineData so a multi-element operation (e.g. a
+   * video cut cascading to its captions) collapses to a single undo entry. Atomic per element: if a
+   * half fails to add, the original is restored (no data loss / green-thumbnail partial state).
+   */
+  private async splitElementNoCommit(
+    element: TrackElement,
+    track: Track,
+    splitTime: number
+  ): Promise<SplitResult> {
     try {
       // Use the visitor pattern to handle different element types
       const elementSplitter = new ElementSplitter(splitTime);
@@ -596,12 +669,6 @@ export class TimelineEditor {
             console.error("[Timeline] splitElement rollback could not restore the original element:", restoreError);
           }
           return { firstElement: element, secondElement: null, success: false };
-        }
-
-        // Update the timeline data to reflect the change
-        const currentData = this.getTimelineData();
-        if (currentData) {
-          this.setTimelineData({tracks: currentData.tracks, updatePlayerData: true});
         }
       }
       return result;
