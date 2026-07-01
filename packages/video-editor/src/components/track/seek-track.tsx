@@ -160,11 +160,41 @@ export default function SeekTrack({
     [duration, ts, seekToTime]
   );
 
+  // LIVE DRAG-SCRUB (ship-dark). Enabled per session via ?liveScrub=1 or localStorage
+  // __editorLiveScrub='1', or globally by the app setting window.__editorLiveScrub=true. When OFF,
+  // the drag behaves EXACTLY as before (seek only on release). Read once on mount.
+  const liveScrubRef = React.useRef(false);
+  React.useEffect(() => {
+    try {
+      const w = window as unknown as { __editorLiveScrub?: boolean };
+      liveScrubRef.current =
+        w.__editorLiveScrub === true ||
+        (typeof localStorage !== "undefined" && localStorage.getItem("__editorLiveScrub") === "1") ||
+        new URLSearchParams(window.location.search).get("liveScrub") === "1";
+    } catch {
+      liveScrubRef.current = false;
+    }
+  }, []);
+  // rAF-throttle so a fast pointer emits at most one seek per frame (always the LATEST target).
+  const rafPendingTimeRef = React.useRef<number | null>(null);
+  const rafIdRef = React.useRef<number | null>(null);
+  React.useEffect(
+    () => () => {
+      if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current);
+      // Safety net: if we unmount mid-drag, don't leave the controller stuck in scrub-mode.
+      if (liveScrubRef.current) {
+        (window as unknown as { __webcodecs_controller?: { setScrubbing?: (a: boolean) => void } })
+          .__webcodecs_controller?.setScrubbing?.(false);
+      }
+    },
+    []
+  );
+
   const bind = useDrag(({ event, xy: [x], active }) => {
     if (event) {
       event.stopPropagation();
     }
-    
+
     setIsDragging(active);
 
     if (!containerRef.current) return;
@@ -173,9 +203,34 @@ export default function SeekTrack({
     const newTime = Math.max(0, Math.min(duration, ts.pxToTime(xPos)));
 
     if (active) {
-      setDragPosition(xPos);
+      setDragPosition(xPos); // visual playhead follows the finger instantly (unchanged)
+      if (liveScrubRef.current) {
+        // Tell the app player to enter scrub-mode (storyboard-first, no awaited decode → any machine).
+        (window as unknown as { __webcodecs_controller?: { setScrubbing?: (a: boolean) => void } })
+          .__webcodecs_controller?.setScrubbing?.(true);
+        // rAF-throttled continuous seek: store the latest target, emit once per frame.
+        rafPendingTimeRef.current = newTime;
+        if (rafIdRef.current === null) {
+          rafIdRef.current = requestAnimationFrame(() => {
+            rafIdRef.current = null;
+            const t = rafPendingTimeRef.current;
+            rafPendingTimeRef.current = null;
+            if (t !== null) seekToTime(t);
+          });
+        }
+      }
     } else {
-      // On drag end: keep playhead at release position until currentTime catches up (avoids snap-back and transition shake)
+      // On drag end: cancel any pending throttled seek, leave scrub-mode (→ exact frame), settle.
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+      rafPendingTimeRef.current = null;
+      if (liveScrubRef.current) {
+        (window as unknown as { __webcodecs_controller?: { setScrubbing?: (a: boolean) => void } })
+          .__webcodecs_controller?.setScrubbing?.(false);
+      }
+      // keep playhead at release position until currentTime catches up (avoids snap-back)
       setDragPosition(null);
       setPendingSeekTime(newTime);
       seekToTime(newTime);
