@@ -1086,12 +1086,42 @@ export class TimelineEditor {
    */
   async rippleDelete(fromTime: number, toTime: number): Promise<void> {
     if (fromTime >= toTime) return;
-    const durationToRemove = toTime - fromTime;
     const currentTracks = this.getTimelineData()?.tracks ?? [];
-    const newTracks: Track[] = [];
+    const newTracks = currentTracks.map((t) => Track.fromJSON(t.serialize()));
+    this.applyRippleToTracks(newTracks, fromTime, toTime);
+    this.setTimelineData({ tracks: newTracks, updatePlayerData: true });
+  }
 
-    for (const track of currentTracks) {
-      const newTrack = Track.fromJSON(track.serialize());
+  /**
+   * Remove MULTIPLE [fromTime, toTime] ranges (e.g. auto-silence removal) as ONE undo step. Ranges
+   * are applied back-to-front (descending fromTime) so cutting a later range never shifts the
+   * coordinates of an earlier, not-yet-cut range — no re-mapping between cuts. One trailing
+   * setTimelineData = a single undo entry + a single autosave for the whole operation. (Looping the
+   * public rippleDelete would produce N undo entries — the same bug class the cut-core work fixed.)
+   */
+  async rippleDeleteRanges(ranges: Array<[number, number]>): Promise<void> {
+    const valid = ranges
+      .filter(([f, t]) => f < t)
+      .sort((a, b) => b[0] - a[0]); // descending fromTime → back-to-front
+    if (valid.length === 0) return;
+    const currentTracks = this.getTimelineData()?.tracks ?? [];
+    const newTracks = currentTracks.map((t) => Track.fromJSON(t.serialize()));
+    for (const [f, t] of valid) {
+      this.applyRippleToTracks(newTracks, f, t);
+    }
+    this.setTimelineData({ tracks: newTracks, updatePlayerData: true });
+  }
+
+  /**
+   * Apply a single [fromTime, toTime] ripple cut to the given tracks IN PLACE (no commit): remove
+   * elements fully inside the range, shift later elements left, split/trim straddling ones, and keep
+   * caption word-timings synced (adjustCaptionWordsForTimeChange). The caller snapshots the tracks
+   * and issues exactly ONE trailing setTimelineData, so a multi-range op collapses to one undo entry.
+   */
+  private applyRippleToTracks(tracks: Track[], fromTime: number, toTime: number): void {
+    if (fromTime >= toTime) return;
+    const durationToRemove = toTime - fromTime;
+    for (const newTrack of tracks) {
       const friend = newTrack.createFriend();
       const elementsCopy = newTrack.getElements();
 
@@ -1138,10 +1168,7 @@ export class TimelineEditor {
           this.adjustCaptionWordsForTimeChange(element, start, end);
         }
       }
-      newTracks.push(newTrack);
     }
-
-    this.setTimelineData({ tracks: newTracks, updatePlayerData: true });
   }
 
   /**
