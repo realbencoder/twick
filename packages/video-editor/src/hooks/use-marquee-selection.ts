@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Track } from "@twick/timeline";
+import { createTimeScale } from "../helpers/time-scale";
 
 const MARQUEE_THRESHOLD = 4;
 
@@ -27,7 +28,9 @@ export function useMarqueeSelection({
   zoomLevel,
   labelWidth,
   trackCount,
-  trackHeight,
+  // trackHeight is intentionally not destructured — row stride now comes from the shared
+  // time-scale helper (trackStride / yToTrackIndex). Kept in the options interface for
+  // call-site back-compat.
   tracks,
   containerRef,
   onMarqueeSelect,
@@ -38,8 +41,6 @@ export function useMarqueeSelection({
   const hasDraggedRef = useRef(false);
   const marqueeRef = useRef(marquee);
   marqueeRef.current = marquee;
-
-  const pixelsPerSecond = 100 * zoomLevel;
 
   const getCoords = useCallback(
     (e: MouseEvent) => {
@@ -85,13 +86,17 @@ export function useMarqueeSelection({
     const top = Math.min(currentMarquee.startY, currentMarquee.endY);
     const bottom = Math.max(currentMarquee.startY, currentMarquee.endY);
 
-    const startTime = Math.max(0, (left - labelWidth) / pixelsPerSecond);
-    const endTime = Math.min(duration, (right - labelWidth) / pixelsPerSecond);
-    const rowHeight = trackHeight + 2;
-    const startTrackIdx = Math.max(0, Math.floor(top / rowHeight));
-    const endTrackIdx = Math.min(
-      trackCount - 1,
-      Math.floor(bottom / rowHeight)
+    const ts = createTimeScale(zoomLevel, duration, labelWidth);
+
+    const startTime = Math.max(0, ts.contentXToTime(left));
+    const endTime = Math.min(duration, ts.contentXToTime(right));
+    const startTrackIdx = Math.max(
+      0,
+      Math.min(trackCount - 1, ts.yToTrackIndex(top))
+    );
+    const endTrackIdx = Math.max(
+      0,
+      Math.min(trackCount - 1, ts.yToTrackIndex(bottom))
     );
 
     const selectedIds = new Set<string>();
@@ -115,10 +120,9 @@ export function useMarqueeSelection({
     window.removeEventListener("mouseup", handleGlobalMouseUp);
   }, [
     duration,
-    pixelsPerSecond,
+    zoomLevel,
     labelWidth,
     trackCount,
-    trackHeight,
     tracks,
     onMarqueeSelect,
     onEmptyClick,

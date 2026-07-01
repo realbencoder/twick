@@ -11,14 +11,14 @@ import { useTimelineDrop } from "../../hooks/use-timeline-drop";
 import { useEdgeAutoScroll } from "../../hooks/use-edge-auto-scroll";
 import { MarqueeOverlay } from "./marquee-overlay";
 import { getTrackOrSeparatorAt, type DropTarget } from "../../utils/drop-target";
+import { useTimeScale, LABEL_WIDTH, SEPARATOR_HEIGHT } from "../../helpers/time-scale";
 import type { Size } from "@twick/timeline";
 import type { ChapterMarker } from "@twick/timeline";
 import type { TrackElementDragPayload } from "../track/track-element";
 
 /** Width of sticky left area (add track button + track headers) in pixels */
-const LABEL_WIDTH = 40;
+// LABEL_WIDTH and SEPARATOR_HEIGHT imported from ../../helpers/time-scale (single source of truth)
 const TRACK_HEIGHT = 44;
-const SEPARATOR_HEIGHT = 6;
 
 function TimelineView({
   zoomLevel,
@@ -38,6 +38,7 @@ function TimelineView({
   selectedIds,
   playheadPositionPx = 0,
   isPlayheadActive = false,
+  currentTime = 0,
   onDropOnTimeline,
   videoResolution,
   enableDropOnTimeline = true,
@@ -72,6 +73,8 @@ function TimelineView({
   playheadPositionPx?: number;
   /** Whether playhead is moving (playing or dragging) */
   isPlayheadActive?: boolean;
+  /** Current playhead time in seconds (used for zoom-recenter in the new-zoom frame) */
+  currentTime?: number;
   /** Called when a file or panel media item is dropped on the timeline */
   onDropOnTimeline?: (params: {
     track: Track | null;
@@ -177,6 +180,9 @@ function TimelineView({
   const timelineWidth = Math.max(100, duration * zoomLevel * 100);
   const timelineWidthPx = `${timelineWidth}px`;
 
+  // Single source of truth for time <-> pixel geometry (matches the clip frame).
+  const timeScale = useTimeScale(zoomLevel, duration);
+
   // Keep playhead centered when zoom changes
   const prevZoomRef = useRef(zoomLevel);
   useEffect(() => {
@@ -184,7 +190,7 @@ function TimelineView({
       const container = containerRef.current;
       const viewportWidth = container.clientWidth;
       // Calculate where the playhead is in the new zoom
-      const playheadPx = playheadPositionPx;
+      const playheadPx = timeScale.timeToContentX(currentTime);
       // Center the playhead in the viewport
       const newScroll = Math.max(0, playheadPx - viewportWidth / 2);
       container.scrollLeft = newScroll;
@@ -194,7 +200,7 @@ function TimelineView({
       }
     }
     prevZoomRef.current = zoomLevel;
-  }, [zoomLevel, playheadPositionPx]);
+  }, [zoomLevel, currentTime, duration]);
 
   // Sync scroll between seek container and timeline container
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -335,7 +341,7 @@ function TimelineView({
             </div>
             <div style={{ flexGrow: 1 }}>{seekTrack}</div>
             {chapters.map((chapter) => {
-              const left = LABEL_WIDTH + (chapter.time / Math.max(duration, 0.001)) * (timelineWidth - LABEL_WIDTH);
+              const left = timeScale.timeToContentX(chapter.time);
               return (
                 <button
                   key={chapter.id}
@@ -378,9 +384,9 @@ function TimelineView({
             className="twick-drop-preview"
             style={{
               position: "absolute",
-              left: LABEL_WIDTH + (preview.timeSec / duration) * (timelineWidth - LABEL_WIDTH),
-              top: preview.trackIndex * TRACK_HEIGHT + 2,
-              width: (preview.widthPct / 100) * (timelineWidth - LABEL_WIDTH),
+              left: timeScale.timeToContentX(preview.timeSec),
+              top: preview.trackIndex * timeScale.trackStride + SEPARATOR_HEIGHT + 2,
+              width: (preview.widthPct / 100) * timeScale.contentWidth,
               height: TRACK_HEIGHT - 4,
             }}
           />

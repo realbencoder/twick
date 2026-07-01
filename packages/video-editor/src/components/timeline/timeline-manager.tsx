@@ -26,7 +26,7 @@ const TimelineManager = ({
   timelineTickConfigs?: TimelineTickConfig[];
   elementColors?: ElementColors;
 }) => {
-  const { playerState } = useLivePlayerContext();
+  const { playerState, currentTime } = useLivePlayerContext();
   const { followPlayheadEnabled, editor, videoResolution, setSelectedItem } =
     useTimelineContext();
   const {
@@ -126,6 +126,7 @@ const TimelineManager = ({
       elementColors={elementColors}
       playheadPositionPx={playheadState.positionPx}
       isPlayheadActive={isPlayheadActive}
+      currentTime={currentTime}
       chapters={(timelineData?.metadata?.chapters as ChapterMarker[] | undefined) ?? []}
       onDropOnTimeline={handleDropOnTimeline}
       videoResolution={videoResolution}

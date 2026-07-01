@@ -7,6 +7,7 @@ import {
 } from "@twick/timeline";
 import { getAssetTypeFromFile, DroppableAssetType } from "../helpers/asset-type";
 import { TIMELINE_DROP_MEDIA_TYPE } from "../helpers/constants";
+import { createTimeScale } from "../helpers/time-scale";
 import type { Size } from "@twick/timeline";
 
 export interface DropPreview {
@@ -66,20 +67,15 @@ export function useTimelineDrop({
       const viewportLeft = scrollEl?.getBoundingClientRect?.()?.left ?? rect.left;
       const contentX = (clientX - viewportLeft) + scrollLeft - labelWidth;
       const relY = clientY - rect.top;
-      const rawTrackIndex = Math.floor(relY / trackHeight);
+      const ts = createTimeScale(zoomLevel, duration, labelWidth);
+      const rawTrackIndex = ts.yToTrackIndex(relY);
       const trackIndex =
         tracks.length === 0
           ? 0
           : Math.max(0, Math.min(tracks.length - 1, rawTrackIndex));
-      // Match track element positioning: track content maps 0..duration to 0..trackContentWidth
-      const pixelsPerSecond =
-        trackContentWidth != null && trackContentWidth > 0
-          ? trackContentWidth / duration
-          : 100 * zoomLevel;
-      const timeSec = Math.max(
-        0,
-        Math.min(duration, contentX / pixelsPerSecond)
-      );
+      // contentX is already label-subtracted (content-relative, 0 at t=0),
+      // so map it straight through the clip frame's pxPerSec = contentWidth/duration.
+      const timeSec = Math.max(0, Math.min(duration, ts.pxToTime(contentX)));
       return { trackIndex, timeSec };
     },
     [

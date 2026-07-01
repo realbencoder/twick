@@ -2,6 +2,7 @@ import React, { useRef, useState, useMemo } from "react";
 import { useDrag } from "@use-gesture/react";
 import "../../styles/timeline.css";
 import { TimelineTickConfig } from "../video-editor";
+import { useTimeScale } from "../../helpers/time-scale";
 
 export interface PlayheadState {
   positionPx: number;
@@ -35,8 +36,8 @@ export default function SeekTrack({
   // After drag end, keep playhead at release position until currentTime catches up (avoids snap-back + transition shake)
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
 
-  const pixelsPerSecond = 100 * zoom;
-  const totalWidth = duration * pixelsPerSecond;
+  const ts = useTimeScale(zoom, duration);
+  const totalWidth = ts.contentWidth;
 
   // Calculate pin height based on number of timeline
   const pinHeight = 2 + timelineCount * (2.75 + 0.5); // 2.75rem height + 0.5rem margin per timeline
@@ -55,10 +56,10 @@ export default function SeekTrack({
       return Math.max(0, dragPosition);
     }
     if (pendingSeekTime !== null) {
-      return Math.max(0, pendingSeekTime * pixelsPerSecond);
+      return Math.max(0, ts.timeToPx(pendingSeekTime));
     }
-    return Math.max(0, currentTime * pixelsPerSecond);
-  }, [isDragging, dragPosition, currentTime, pendingSeekTime, pixelsPerSecond]);
+    return Math.max(0, ts.timeToPx(currentTime));
+  }, [isDragging, dragPosition, currentTime, pendingSeekTime, ts]);
 
   // Notify parent of playhead state for auto-scroll during playback/drag
   React.useEffect(() => {
@@ -153,10 +154,10 @@ export default function SeekTrack({
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
       const x = clientX - rect.left + (containerRef.current.scrollLeft || 0);
-      const newTime = Math.max(0, Math.min(duration, x / pixelsPerSecond));
+      const newTime = Math.max(0, Math.min(duration, ts.pxToTime(x)));
       seekToTime(newTime);
     },
-    [duration, pixelsPerSecond, seekToTime]
+    [duration, ts, seekToTime]
   );
 
   const bind = useDrag(({ event, xy: [x], active }) => {
@@ -169,7 +170,7 @@ export default function SeekTrack({
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const xPos = x - rect.left + (containerRef.current.scrollLeft || 0);
-    const newTime = Math.max(0, Math.min(duration, xPos / pixelsPerSecond));
+    const newTime = Math.max(0, Math.min(duration, ts.pxToTime(xPos)));
 
     if (active) {
       setDragPosition(xPos);
@@ -211,7 +212,7 @@ export default function SeekTrack({
           
           // Draw ticks
           tickPositions.forEach((t) => {
-            const left = t * pixelsPerSecond;
+            const left = ts.timeToPx(t);
             const isMajor = Math.abs((t / majorIntervalSec) - Math.round(t / majorIntervalSec)) < 0.001;
             
             ticks.push(

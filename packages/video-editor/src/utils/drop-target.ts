@@ -2,12 +2,12 @@
  * Hit-test: given clientY relative to timeline content area, return whether
  * the pointer is over a track or a separator (gap between tracks). OpenVideo-style.
  */
+import { SEPARATOR_HEIGHT } from "../helpers/time-scale";
+
 export type DropTarget =
   | { type: "track"; trackIndex: number }
   | { type: "separator"; separatorIndex: number }
   | null;
-
-const SEPARATOR_HEIGHT = 6;
 
 export function getTrackOrSeparatorAt(
   clientY: number,
