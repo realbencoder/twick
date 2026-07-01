@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { memo, useRef } from "react";
 import { Track, TrackElement } from "@twick/timeline";
 import "../../styles/timeline.css";
 import TrackElementView from "./track-element";
@@ -20,7 +20,11 @@ interface TrackBaseProps {
   elementColors?: ElementColors;
 }
 
-const TrackBase = ({
+// Memoized: clips/tracks are logically INDEPENDENT of the playhead tick (nothing here reads
+// currentTime; the playhead is a single overlay in seek-track, not per-track). With stable props
+// from timeline-view (onItemSelection/onDragStateChange are useCallback'd), default shallow compare
+// skips the ~20×/sec playback re-renders that used to cascade through every track + clip.
+const TrackBase = memo(({
   duration,
   zoom,
   track,
@@ -69,6 +73,6 @@ const TrackBase = ({
       ))}
     </div>
   );
-};
+});
 
 export default TrackBase;

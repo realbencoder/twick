@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, memo } from "react";
 import { useDrag } from "@use-gesture/react";
 import { motion, HTMLMotionProps } from "framer-motion";
 import {
@@ -15,6 +15,12 @@ import {
 import { ElementColors } from "../../helpers/types";
 import "../../styles/timeline.css";
 
+// Thumbnail cache keyed by SOURCE (not element id) so split-clone siblings sharing a src reuse one
+// decode, and a remount (e.g. aspect-ratio switch) doesn't re-decode every clip. Values are ~320px
+// JPEG data URLs (~10-30KB); distinct sources are far fewer than clips, so unbounded is fine here.
+// (If a project ever loads hundreds of distinct large sources, wrap this in a bounded LRU.)
+const THUMB_CACHE = new Map<string, string>();
+
 export interface TrackElementDragPayload {
   element: TrackElement;
   dragType: string;
@@ -26,7 +32,7 @@ export interface DropPointer {
   clientY: number;
 }
 
-export const TrackElementView: React.FC<{
+interface TrackElementViewProps {
   element: TrackElement;
   selectedItem: TrackElement | null;
   selectedIds: Set<string>;
@@ -39,7 +45,13 @@ export const TrackElementView: React.FC<{
   onDrag: (payload: TrackElementDragPayload, dropPointer?: DropPointer) => void;
   onDragStateChange?: (isDragging: boolean, element?: TrackElement) => void;
   elementColors?: ElementColors;
-}> = ({
+}
+
+// Memoized (see track-base): a clip is independent of the playhead tick, so with stable props from
+// the parent default shallow compare skips playback re-renders. Local drag/resize state lives BELOW
+// this boundary so interactions still update live; a real edit changes selectedItem/selectedIds refs
+// → shallow compare re-renders exactly the affected clip.
+export const TrackElementView = memo(({
   element,
   parentWidth,
   duration,
@@ -52,12 +64,16 @@ export const TrackElementView: React.FC<{
   allowOverlap = false,
   onDragStateChange,
   elementColors,
-}) => {
+}: TrackElementViewProps) => {
   const ref = useRef<HTMLDivElement>(null);
   const dragType = useRef<string | null>(null);
   const lastPosRef = useRef<{ start: number; end: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  const [thumbUrl, setThumbUrl] = useState<string | null>(() => {
+    // Seed synchronously from the cache so a remount with a warm src shows no thumbnail flash.
+    const s = (element as any).getProps?.()?.src;
+    return s && THUMB_CACHE.has(s) ? THUMB_CACHE.get(s)! : null;
+  });
 
   // Extract a single thumbnail frame for video/image elements
   useEffect(() => {
@@ -67,7 +83,14 @@ export const TrackElementView: React.FC<{
     const src = props.src;
     if (!src) return;
 
+    // Cache hit — no decode, no hidden <video> created (the whole point of #11).
+    if (THUMB_CACHE.has(src)) {
+      setThumbUrl(THUMB_CACHE.get(src)!);
+      return;
+    }
+
     if (type === 'image') {
+      THUMB_CACHE.set(src, src);
       setThumbUrl(src);
       return;
     }
@@ -97,7 +120,10 @@ export const TrackElementView: React.FC<{
           if (ctx) {
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-            if (!cancelled) setThumbUrl(dataUrl);
+            if (!cancelled) {
+              THUMB_CACHE.set(src, dataUrl);
+              setThumbUrl(dataUrl);
+            }
           }
         } catch {
           // Canvas tainted (CORS) — retry without crossOrigin won't help for toDataURL
@@ -366,6 +392,6 @@ export const TrackElementView: React.FC<{
       </div>
     </motion.div>
   );
-};
+});
 
 export default TrackElementView;

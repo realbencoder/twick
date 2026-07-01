@@ -322,9 +322,21 @@ function TimelineView({
     setDraggedTimeline(null);
   };
 
-  const handleItemSelection = (item: Track | TrackElement, event: React.MouseEvent) => {
-    onItemSelect(item, event);
-  };
+  // useCallback so the memoized TrackBase/TrackElement don't re-render every playhead tick from a
+  // fresh function ref — without stable props, React.memo on the tracks is a no-op (see #8).
+  const handleItemSelection = useCallback(
+    (item: Track | TrackElement, event: React.MouseEvent) => {
+      onItemSelect(item, event);
+    },
+    [onItemSelect]
+  );
+
+  const handleDragStateChange = useCallback(
+    (isDragging: boolean, el?: TrackElement) => {
+      setDraggingElementId(isDragging && el ? el.getId() : null);
+    },
+    []
+  );
 
 
   return (
@@ -426,9 +438,7 @@ function TimelineView({
                   trackWidth={timelineWidth - LABEL_WIDTH}
                   onItemSelection={handleItemSelection}
                   onDrag={handleDragWithDrop}
-                  onDragStateChange={(isDragging, el) => {
-                    setDraggingElementId(isDragging && el ? el.getId() : null);
-                  }}
+                  onDragStateChange={handleDragStateChange}
                   elementColors={elementColors}
                 />
               </div>

@@ -182,6 +182,81 @@ export default function SeekTrack({
     }
   });
 
+  // Memoized ruler: ticks/labels depend only on duration + zoom (via ts) + the tick intervals — NOT
+  // on the playhead. Building the ~110 tick <div>s used to run on every SeekTrack render (~20×/sec
+  // during playback, since seekPosition recomputes each tick). Now the node is reused by reference
+  // between playhead ticks; it rebuilds only when duration/zoom/intervals change.
+  const ruler = useMemo(() => {
+    const ticks: React.ReactElement[] = [];
+    const labels: React.ReactElement[] = [];
+    const epsilon = 1e-6;
+
+    // Generate all tick positions
+    const tickPositions = new Set<number>();
+
+    // Add minor ticks
+    for (let t = 0; t <= duration + epsilon; t += minorIntervalSec) {
+      tickPositions.add(Math.round(t * 1000) / 1000); // Round to avoid floating point issues
+    }
+
+    // Draw ticks
+    tickPositions.forEach((t) => {
+      const left = ts.timeToPx(t);
+      const isMajor = Math.abs((t / majorIntervalSec) - Math.round(t / majorIntervalSec)) < 0.001;
+
+      ticks.push(
+        <div
+          key={`tick-${t}`}
+          style={{
+            position: "absolute",
+            left,
+            top: 0,
+            width: "1px",
+            height: isMajor ? "12px" : "8px",
+            backgroundColor: isMajor ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.2)",
+            pointerEvents: "none",
+          }}
+        />
+      );
+
+      // Add labels only for major ticks
+      if (isMajor && t > epsilon) {
+        labels.push(
+          <div
+            key={`lbl-${t}`}
+            style={{
+              position: "absolute",
+              left,
+              bottom: "6px",
+              transform: "translateX(-50%)",
+              color: "rgba(255,255,255,0.7)",
+              font: "bold 10px system-ui, sans-serif",
+              pointerEvents: "none",
+              textShadow: "1px 1px 2px rgba(0,0,0,0.8)",
+            }}
+          >
+            {`${Math.floor(t)}s`}
+          </div>
+        );
+      }
+    });
+
+    return (
+      <div
+        style={{
+          overflow: "hidden",
+          position: "relative",
+          width: `${Math.max(1, Math.round(totalWidth))}px`,
+          height: "32px",
+          backgroundColor: "#0f0f0f",
+        }}
+      >
+        {ticks}
+        {labels}
+      </div>
+    );
+  }, [duration, minorIntervalSec, majorIntervalSec, ts, totalWidth]);
+
   return (
     <div className="twick-seek-track">
       <div
@@ -196,77 +271,8 @@ export default function SeekTrack({
           msOverflowStyle: "none", // IE/Edge
         }}
       >
-        {/* Ruler with individual tick divs to prevent overlap */}
-        {(() => {
-          const ticks: React.ReactElement[] = [];
-          const labels: React.ReactElement[] = [];
-          const epsilon = 1e-6;
-          
-          // Generate all tick positions
-          const tickPositions = new Set<number>();
-          
-          // Add minor ticks
-          for (let t = 0; t <= duration + epsilon; t += minorIntervalSec) {
-            tickPositions.add(Math.round(t * 1000) / 1000); // Round to avoid floating point issues
-          }
-          
-          // Draw ticks
-          tickPositions.forEach((t) => {
-            const left = ts.timeToPx(t);
-            const isMajor = Math.abs((t / majorIntervalSec) - Math.round(t / majorIntervalSec)) < 0.001;
-            
-            ticks.push(
-              <div
-                key={`tick-${t}`}
-                style={{
-                  position: "absolute",
-                  left,
-                  top: 0,
-                  width: "1px",
-                  height: isMajor ? "12px" : "8px",
-                  backgroundColor: isMajor ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.2)",
-                  pointerEvents: "none",
-                }}
-              />
-            );
-            
-            // Add labels only for major ticks
-            if (isMajor && t > epsilon) {
-              labels.push(
-                <div
-                  key={`lbl-${t}`}
-                  style={{
-                    position: "absolute",
-                    left,
-                    bottom: "6px",
-                    transform: "translateX(-50%)",
-                    color: "rgba(255,255,255,0.7)",
-                    font: "bold 10px system-ui, sans-serif",
-                    pointerEvents: "none",
-                    textShadow: "1px 1px 2px rgba(0,0,0,0.8)",
-                  }}
-                >
-                  {`${Math.floor(t)}s`}
-                </div>
-              );
-            }
-          });
-          
-          return (
-            <div
-              style={{
-                overflow: "hidden",
-                position: "relative",
-                width: `${Math.max(1, Math.round(totalWidth))}px`,
-                height: "32px",
-                backgroundColor: "#0f0f0f",
-              }}
-            >
-              {ticks}
-              {labels}
-            </div>
-          );
-        })()}
+        {/* Ruler with individual tick divs to prevent overlap (memoized above as `ruler`) */}
+        {ruler}
         
         {/* Seek tip (playhead) */}
         <div
