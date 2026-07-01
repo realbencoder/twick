@@ -186,6 +186,14 @@ export const TrackElementView = memo(({
   // 'twick-waveform-ready' event triggers the first paint.
   const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
   const showWaveform = isMainVideoTrack && element.getType() === "video";
+  // Read the source offset at RENDER time so it participates in the draw-effect deps. A start-edge
+  // trim commits by mutating props.time IN PLACE while the committed start/end can be numerically
+  // identical to the local drag state (snapping/clamping produces exactly this) — so position deps
+  // alone would never re-fire and the bars would keep the pre-trim offset (adversarial-review
+  // finding). srcTime/rate in the deps re-draw on the post-commit render.
+  const wfProps = showWaveform ? ((element as any).getProps?.() ?? {}) : null;
+  const wfSrcTime = wfProps ? Number(wfProps.time) || 0 : 0;
+  const wfRate = wfProps ? Number(wfProps.playbackRate) || 1 : 1;
   useEffect(() => {
     if (!showWaveform) return;
     const canvas = waveformCanvasRef.current;
@@ -193,14 +201,11 @@ export const TrackElementView = memo(({
     const draw = () => {
       const wf = getTimelineWaveform();
       if (!wf) return false;
-      const props = (element as any).getProps?.() ?? {};
-      const srcStart = Number(props.time) || 0;
-      const rate = Number(props.playbackRate) || 1;
-      const srcSpan = Math.max(0, (position.end - position.start) * rate);
+      const srcSpan = Math.max(0, (position.end - position.start) * wfRate);
       // Cap DPR at 2 — retina-crisp without 3x-display overdraw on a long timeline of clips.
       const dpr = Math.min(2, (typeof window !== "undefined" && window.devicePixelRatio) || 1);
       return drawClipWaveform(canvas, wf, {
-        srcStart,
+        srcStart: wfSrcTime,
         srcSpan,
         cssWidth: canvas.clientWidth,
         cssHeight: canvas.clientHeight,
@@ -213,7 +218,7 @@ export const TrackElementView = memo(({
     };
     window.addEventListener("twick-waveform-ready", onReady);
     return () => window.removeEventListener("twick-waveform-ready", onReady);
-  }, [showWaveform, element.getId(), position.start, position.end, parentWidth, duration]);
+  }, [showWaveform, element.getId(), position.start, position.end, wfSrcTime, wfRate, parentWidth, duration]);
 
   // Snaps a candidate edge time (seconds) to the nearest timeline target within SNAP_THRESHOLD_PX,
   // measured in the CURRENT zoom (pixelsPerSecond = parentWidth / duration). Returns the input

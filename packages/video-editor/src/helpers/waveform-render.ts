@@ -92,6 +92,15 @@ export function drawClipWaveform(
   const mid = cssHeight / 2;
   const halfMax = mid - 0.5;
 
+  // Subtle bottom scrim so white bars stay readable over bright clip thumbnails (the clip body
+  // draws its frame thumbnail as backgroundImage:cover behind this canvas). Fades to transparent
+  // at the top of the strip — invisible over dark footage, just enough contrast over bright.
+  const scrim = ctx.createLinearGradient(0, 0, 0, cssHeight);
+  scrim.addColorStop(0, "rgba(0,0,0,0)");
+  scrim.addColorStop(1, "rgba(0,0,0,0.30)");
+  ctx.fillStyle = scrim;
+  ctx.fillRect(0, 0, cssWidth, cssHeight);
+
   ctx.fillStyle = opts.color ?? "rgba(255,255,255,0.78)";
 
   const roundRect =

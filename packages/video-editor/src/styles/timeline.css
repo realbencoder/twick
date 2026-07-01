@@ -131,6 +131,11 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* Paint the clip label ABOVE the waveform canvas (positioned, z-index 0). A static in-flow div
+     paints BEFORE positioned descendants regardless of DOM order (CSS 2.1 App. E), so without this
+     the bars would wash out the bottom of the label text. */
+  position: relative;
+  z-index: 1;
 }
 
 .twick-track-element-handle {
