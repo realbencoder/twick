@@ -194,6 +194,8 @@ export const TrackElementView = memo(({
   const wfProps = showWaveform ? ((element as any).getProps?.() ?? {}) : null;
   const wfSrcTime = wfProps ? Number(wfProps.time) || 0 : 0;
   const wfRate = wfProps ? Number(wfProps.playbackRate) || 1 : 1;
+  // Clip volume (linear, 1 = unity) — bars scale with the Playback panel's volume slider.
+  const wfVolume = wfProps ? Number(wfProps.volume ?? 1) : 1;
   useEffect(() => {
     if (!showWaveform) return;
     const canvas = waveformCanvasRef.current;
@@ -205,6 +207,7 @@ export const TrackElementView = memo(({
       // Cap DPR at 2 — retina-crisp without 3x-display overdraw on a long timeline of clips.
       const dpr = Math.min(2, (typeof window !== "undefined" && window.devicePixelRatio) || 1);
       return drawClipWaveform(canvas, wf, {
+        gain: wfVolume,
         srcStart: wfSrcTime,
         srcSpan,
         cssWidth: canvas.clientWidth,
@@ -218,7 +221,7 @@ export const TrackElementView = memo(({
     };
     window.addEventListener("twick-waveform-ready", onReady);
     return () => window.removeEventListener("twick-waveform-ready", onReady);
-  }, [showWaveform, element.getId(), position.start, position.end, wfSrcTime, wfRate, parentWidth, duration]);
+  }, [showWaveform, element.getId(), position.start, position.end, wfSrcTime, wfRate, wfVolume, parentWidth, duration]);
 
   // Snaps a candidate edge time (seconds) to the nearest timeline target within SNAP_THRESHOLD_PX,
   // measured in the CURRENT zoom (pixelsPerSecond = parentWidth / duration). Returns the input

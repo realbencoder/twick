@@ -56,6 +56,12 @@ export interface DrawClipWaveformOpts {
   dpr: number;
   /** Bar fill style. Default: translucent white (reads on any track color). */
   color?: string;
+  /**
+   * Element volume as LINEAR gain (props.volume, 1 = unity). Bar heights scale with it so the
+   * waveform reflects the user's volume adjustment (CapCut behavior) — muted draws near-flat,
+   * boosted draws taller (clamped at full height).
+   */
+  gain?: number;
 }
 
 const BAR_CSS_WIDTH = 2; // px bar
@@ -96,12 +102,14 @@ export function drawClipWaveform(
   // draws its frame thumbnail as backgroundImage:cover behind this canvas). Fades to transparent
   // at the top of the strip — invisible over dark footage, just enough contrast over bright.
   const scrim = ctx.createLinearGradient(0, 0, 0, cssHeight);
-  scrim.addColorStop(0, "rgba(0,0,0,0)");
-  scrim.addColorStop(1, "rgba(0,0,0,0.30)");
+  scrim.addColorStop(0, "rgba(0,0,0,0.10)");
+  scrim.addColorStop(1, "rgba(0,0,0,0.50)");
   ctx.fillStyle = scrim;
   ctx.fillRect(0, 0, cssWidth, cssHeight);
 
   ctx.fillStyle = opts.color ?? "rgba(255,255,255,0.78)";
+  // Clip volume as linear gain — bars mirror the user's volume slider (0 = flat, >1 = taller).
+  const gain = Math.max(0, opts.gain ?? 1);
 
   const roundRect =
     typeof (ctx as CanvasRenderingContext2D & { roundRect?: unknown }).roundRect === "function";
@@ -123,7 +131,8 @@ export function drawClipWaveform(
     }
 
     // Perceptual gamma so quiet-mid speech stays visible; mirrored half-height.
-    const half = Math.max(MIN_BAR / 2, Math.pow(peak / 255, GAMMA) * halfMax);
+    // Gain applied pre-gamma so the bars track the clip's EFFECTIVE loudness (clamped at unity).
+    const half = Math.max(MIN_BAR / 2, Math.pow(Math.min(1, (peak / 255) * gain), GAMMA) * halfMax);
     const x = i * stride;
     const y = mid - half;
     const h = half * 2;
