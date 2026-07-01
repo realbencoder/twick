@@ -4,6 +4,7 @@ import { motion, HTMLMotionProps } from "framer-motion";
 import {
   MIN_DURATION,
   DRAG_TYPE,
+  SNAP_THRESHOLD_PX,
 } from "../../helpers/constants";
 import { ELEMENT_COLORS } from "../../helpers/editor.utils";
 import {
@@ -11,6 +12,8 @@ import {
   getDecimalNumber,
   TrackElement,
   TIMELINE_ELEMENT_TYPE,
+  snapTime,
+  pxToSecThreshold,
 } from "@twick/timeline";
 import { ElementColors } from "../../helpers/types";
 import "../../styles/timeline.css";
@@ -45,6 +48,13 @@ interface TrackElementViewProps {
   onDrag: (payload: TrackElementDragPayload, dropPointer?: DropPointer) => void;
   onDragStateChange?: (isDragging: boolean, element?: TrackElement) => void;
   elementColors?: ElementColors;
+  /**
+   * Returns the timeline snap-target times (in seconds) — other clips' edges, the playhead, 0, and
+   * the timeline end — excluding the given element. MUST be a stable reference (parent wraps in
+   * useCallback reading refs) so this memoized component is not re-created on every playhead tick.
+   * Optional: when omitted, dragging behaves exactly as before (no snapping).
+   */
+  getSnapTargets?: (excludeElementId: string) => number[];
 }
 
 // Memoized (see track-base): a clip is independent of the playhead tick, so with stable props from
@@ -64,6 +74,7 @@ export const TrackElementView = memo(({
   allowOverlap = false,
   onDragStateChange,
   elementColors,
+  getSnapTargets,
 }: TrackElementViewProps) => {
   const ref = useRef<HTMLDivElement>(null);
   const dragType = useRef<string | null>(null);
@@ -158,6 +169,15 @@ export const TrackElementView = memo(({
     });
   }, [element.getStart(), element.getEnd(), parentWidth, duration]);
 
+  // Snaps a candidate edge time (seconds) to the nearest timeline target within SNAP_THRESHOLD_PX,
+  // measured in the CURRENT zoom (pixelsPerSecond = parentWidth / duration). Returns the input
+  // unchanged when snapping is disabled (no getSnapTargets) or nothing is within threshold.
+  const snapEdgeTime = (t: number, targets: number[]): number => {
+    if (targets.length === 0 || !parentWidth || duration <= 0) return t;
+    const thresholdSec = pxToSecThreshold(SNAP_THRESHOLD_PX, parentWidth / duration);
+    return snapTime(t, targets, thresholdSec).time;
+  };
+
   const bind = useDrag(({ delta: [dx], event }) => {
     if (!parentWidth) return;
     if (dx == 0) return;
@@ -169,6 +189,8 @@ export const TrackElementView = memo(({
       onDragStateChange?.(true, element);
     }
     dragType.current = DRAG_TYPE.MOVE;
+    // Read snap targets ONCE per move, OUTSIDE the state updater (updater stays pure).
+    const snapTargets = getSnapTargets?.(element.getId()) ?? [];
     setPosition((prev) => {
       const span = prev.end - prev.start;
       if (span <= 0) return prev; // Prevent degenerate state
@@ -180,6 +202,24 @@ export const TrackElementView = memo(({
         }
         if (nextStart !== null && newStart + span > nextStart) {
           newStart = nextStart - span;
+        }
+      }
+      // Magnetic snap: snap whichever edge (start OR end) sits closest to a target, preserving the
+      // clip's span, then re-honor the neighbor clamps (a clamp override cancels the snap).
+      if (snapTargets.length) {
+        const s = snapEdgeTime(newStart, snapTargets);
+        const e = snapEdgeTime(newStart + span, snapTargets);
+        const sDist = s !== newStart ? Math.abs(s - newStart) : Infinity;
+        const eDist = e !== newStart + span ? Math.abs(e - (newStart + span)) : Infinity;
+        if (sDist !== Infinity && sDist <= eDist) {
+          newStart = s;
+        } else if (eDist !== Infinity) {
+          newStart = e - span;
+        }
+        newStart = Math.max(0, newStart);
+        if (!allowOverlap) {
+          if (prevEnd !== null && newStart < prevEnd) newStart = prevEnd;
+          if (nextStart !== null && newStart + span > nextStart) newStart = nextStart - span;
         }
       }
       // Ensure end > start always
@@ -200,11 +240,19 @@ export const TrackElementView = memo(({
     if (dx === 0 && !last) return;
     dragType.current = DRAG_TYPE.START;
     if (last) return; // Keep dragType as START so sendUpdate adjusts startAt
+    const snapTargets = getSnapTargets?.(element.getId()) ?? [];
     setPosition((prev) => {
       let newStart = prev.start + (dx / parentWidth) * duration;
       newStart = Math.max(0, Math.min(newStart, prev.end - MIN_DURATION));
       if (prevEnd !== null && !allowOverlap && newStart < prevEnd) {
         newStart = prevEnd;
+      }
+      // Snap the leading edge, then re-honor the same clamps.
+      if (snapTargets.length) {
+        let snapped = snapEdgeTime(newStart, snapTargets);
+        snapped = Math.max(0, Math.min(snapped, prev.end - MIN_DURATION));
+        if (prevEnd !== null && !allowOverlap && snapped < prevEnd) snapped = prevEnd;
+        newStart = snapped;
       }
       return {
         start: newStart,
@@ -220,6 +268,7 @@ export const TrackElementView = memo(({
     if (dx === 0 && !last) return;
     dragType.current = DRAG_TYPE.END;
     if (last) return; // Keep dragType as END so sendUpdate knows it was an edge drag
+    const snapTargets = getSnapTargets?.(element.getId()) ?? [];
     setPosition((prev) => {
       let newEnd = prev.end + (dx / parentWidth) * duration;
       newEnd = Math.max(newEnd, prev.start + MIN_DURATION);
@@ -229,6 +278,13 @@ export const TrackElementView = memo(({
         if (nextStart !== null && newEnd > nextStart) {
           newEnd = nextStart;
         }
+      }
+      // Snap the trailing edge, then re-honor the same clamps.
+      if (snapTargets.length) {
+        let snapped = snapEdgeTime(newEnd, snapTargets);
+        snapped = Math.max(snapped, prev.start + MIN_DURATION);
+        if (!allowOverlap && nextStart !== null && snapped > nextStart) snapped = nextStart;
+        newEnd = snapped;
       }
       return {
         start: prev.start,

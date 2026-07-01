@@ -18,6 +18,8 @@ interface TrackBaseProps {
   onDrag: (payload: TrackElementDragPayload, dropPointer?: DropPointer) => void;
   onDragStateChange?: (isDragging: boolean, element?: TrackElement) => void;
   elementColors?: ElementColors;
+  /** Stable callback returning timeline snap-target times (see TrackElementView). Optional. */
+  getSnapTargets?: (excludeElementId: string) => number[];
 }
 
 // Memoized: clips/tracks are logically INDEPENDENT of the playhead tick (nothing here reads
@@ -36,6 +38,7 @@ const TrackBase = memo(({
   allowOverlap = false,
   onDragStateChange,
   elementColors,
+  getSnapTargets,
 }: TrackBaseProps) => {
   const trackRef = useRef<HTMLDivElement>(null);
 
@@ -63,6 +66,7 @@ const TrackBase = memo(({
           onDrag={onDrag}
           onDragStateChange={onDragStateChange}
           elementColors={elementColors}
+          getSnapTargets={getSnapTargets}
           nextStart={
             index < elements.length - 1
               ? elements[index + 1].getStart()

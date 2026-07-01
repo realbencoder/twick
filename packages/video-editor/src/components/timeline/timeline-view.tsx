@@ -12,6 +12,7 @@ import { useEdgeAutoScroll } from "../../hooks/use-edge-auto-scroll";
 import { MarqueeOverlay } from "./marquee-overlay";
 import { getTrackOrSeparatorAt, type DropTarget } from "../../utils/drop-target";
 import { useTimeScale, LABEL_WIDTH, SEPARATOR_HEIGHT } from "../../helpers/time-scale";
+import { getSnapTargets as computeSnapTargets } from "../../helpers/snap-targets";
 import type { Size } from "@twick/timeline";
 import type { ChapterMarker } from "@twick/timeline";
 import type { TrackElementDragPayload } from "../track/track-element";
@@ -338,6 +339,27 @@ function TimelineView({
     []
   );
 
+  // Snapping: give each clip a STABLE getSnapTargets so it can magnetize its edges to other clips'
+  // edges, the playhead, 0, and the timeline end while dragging. Read tracks/currentTime/duration
+  // from refs (mirrored below) so this callback's identity NEVER changes on a playhead tick — a
+  // fresh ref here would defeat the TrackBase/TrackElement memo and re-introduce the per-tick
+  // re-render cascade (#8 / P1b). Targets are read at drag time, so they're always current.
+  const snapTracksRef = useRef(tracks);
+  const snapCurrentTimeRef = useRef(currentTime);
+  const snapDurationRef = useRef(duration);
+  snapTracksRef.current = tracks;
+  snapCurrentTimeRef.current = currentTime;
+  snapDurationRef.current = duration;
+  const getSnapTargets = useCallback(
+    (excludeElementId: string) =>
+      computeSnapTargets(
+        snapTracksRef.current ?? [],
+        snapCurrentTimeRef.current,
+        snapDurationRef.current,
+        excludeElementId
+      ),
+    []
+  );
 
   return (
     <div
@@ -440,6 +462,7 @@ function TimelineView({
                   onDrag={handleDragWithDrop}
                   onDragStateChange={handleDragStateChange}
                   elementColors={elementColors}
+                  getSnapTargets={getSnapTargets}
                 />
               </div>
               <div
