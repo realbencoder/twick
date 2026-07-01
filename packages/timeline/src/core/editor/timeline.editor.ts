@@ -1118,6 +1118,25 @@ export class TimelineEditor {
    * caption word-timings synced (adjustCaptionWordsForTimeChange). The caller snapshots the tracks
    * and issues exactly ONE trailing setTimelineData, so a multi-range op collapses to one undo entry.
    */
+  /**
+   * Advance a media element's SOURCE offset (props.time) by `timelineSeconds` of removed timeline
+   * content, honoring playbackRate. This is what makes a ripple range-cut actually SKIP the cut
+   * content: shortening s/e alone shortens the timeline but keeps playing the same source region —
+   * the cut content stays in playback and real content falls off the END instead (the auto-silence
+   * "it didn't remove anything" bug). Duck-typed: only video/audio have getStartAt/setStartAt;
+   * text/images/captions are a no-op (caption words are handled by adjustCaptionWordsForTimeChange).
+   */
+  private advanceSourceOffset(element: TrackElement, timelineSeconds: number): void {
+    const el = element as unknown as {
+      getStartAt?: () => number;
+      setStartAt?: (t: number) => void;
+    };
+    if (typeof el.getStartAt === "function" && typeof el.setStartAt === "function") {
+      const rate = (element.getProps() as { playbackRate?: number } | undefined)?.playbackRate ?? 1;
+      el.setStartAt(el.getStartAt() + timelineSeconds * rate);
+    }
+  }
+
   private applyRippleToTracks(tracks: Track[], fromTime: number, toTime: number): void {
     if (fromTime >= toTime) return;
     const durationToRemove = toTime - fromTime;
@@ -1150,6 +1169,9 @@ export class TimelineEditor {
             const secondPrevStart = result.secondElement.getStart();
             const secondPrevEnd = result.secondElement.getEnd();
             result.secondElement.setEnd(fromTime + (end - toTime));
+            // The splitter anchored the second half's source at fromTime — skip the cut region too,
+            // otherwise the removed content still plays and real content falls off the end.
+            this.advanceSourceOffset(result.secondElement, durationToRemove);
             this.adjustCaptionWordsForTimeChange(result.secondElement, secondPrevStart, secondPrevEnd);
             friend.addElement(result.firstElement, true);
             friend.addElement(result.secondElement, true);
@@ -1165,6 +1187,8 @@ export class TimelineEditor {
         if (start >= fromTime && end > toTime) {
           element.setStart(fromTime);
           element.setEnd(fromTime + (end - toTime));
+          // The element's head [start → toTime] was cut away — skip that region in the SOURCE too.
+          this.advanceSourceOffset(element, toTime - start);
           this.adjustCaptionWordsForTimeChange(element, start, end);
         }
       }
