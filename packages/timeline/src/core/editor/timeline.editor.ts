@@ -1113,6 +1113,36 @@ export class TimelineEditor {
   }
 
   /**
+   * Close every gap on the magnetic MAIN track (the track named `trackName`, default "Video") so it
+   * stays contiguous from 0:00 — collect the leading + interior gaps and remove them in ONE
+   * rippleDeleteRanges call (source-offset-correct, single undo entry). Called after a main-track
+   * move/trim (via use-timeline-manager's duck-typed closeMainTrackGapsIfNeeded) so deadspace never
+   * persists. Returns true if any gap was closed.
+   *
+   * NOTE: this method previously existed ONLY in the vendored dist (a hand-patch); it was ported
+   * back into source during the 2026-07-02 source↔dist reconciliation so a rebuild preserves it.
+   */
+  async closeVideoTrackGaps(trackName = "Video"): Promise<boolean> {
+    const tracks = this.getTimelineData()?.tracks ?? [];
+    const main = tracks.find((t) => t.getName() === trackName);
+    if (!main) return false;
+    const els = [...main.getElements()].sort((a, b) => a.getStart() - b.getStart());
+    if (els.length === 0) return false;
+    const EPS = 5e-3;
+    const gaps: Array<[number, number]> = [];
+    let pos = 0;
+    for (const el of els) {
+      const s = el.getStart();
+      if (s - pos > EPS) gaps.push([pos, s]);
+      const e = el.getEnd();
+      if (e > pos) pos = e;
+    }
+    if (gaps.length === 0) return false;
+    await this.rippleDeleteRanges(gaps);
+    return true;
+  }
+
+  /**
    * Apply a single [fromTime, toTime] ripple cut to the given tracks IN PLACE (no commit): remove
    * elements fully inside the range, shift later elements left, split/trim straddling ones, and keep
    * caption word-timings synced (adjustCaptionWordsForTimeChange). The caller snapshots the tracks
