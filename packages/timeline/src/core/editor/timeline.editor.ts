@@ -1086,12 +1086,61 @@ export class TimelineEditor {
    */
   async rippleDelete(fromTime: number, toTime: number): Promise<void> {
     if (fromTime >= toTime) return;
-    const durationToRemove = toTime - fromTime;
     const currentTracks = this.getTimelineData()?.tracks ?? [];
-    const newTracks: Track[] = [];
+    const newTracks = currentTracks.map((t) => Track.fromJSON(t.serialize()));
+    this.applyRippleToTracks(newTracks, fromTime, toTime);
+    this.setTimelineData({ tracks: newTracks, updatePlayerData: true });
+  }
 
-    for (const track of currentTracks) {
-      const newTrack = Track.fromJSON(track.serialize());
+  /**
+   * Remove MULTIPLE [fromTime, toTime] ranges (e.g. auto-silence removal) as ONE undo step. Ranges
+   * are applied back-to-front (descending fromTime) so cutting a later range never shifts the
+   * coordinates of an earlier, not-yet-cut range — no re-mapping between cuts. One trailing
+   * setTimelineData = a single undo entry + a single autosave for the whole operation. (Looping the
+   * public rippleDelete would produce N undo entries — the same bug class the cut-core work fixed.)
+   */
+  async rippleDeleteRanges(ranges: Array<[number, number]>): Promise<void> {
+    const valid = ranges
+      .filter(([f, t]) => f < t)
+      .sort((a, b) => b[0] - a[0]); // descending fromTime → back-to-front
+    if (valid.length === 0) return;
+    const currentTracks = this.getTimelineData()?.tracks ?? [];
+    const newTracks = currentTracks.map((t) => Track.fromJSON(t.serialize()));
+    for (const [f, t] of valid) {
+      this.applyRippleToTracks(newTracks, f, t);
+    }
+    this.setTimelineData({ tracks: newTracks, updatePlayerData: true });
+  }
+
+  /**
+   * Apply a single [fromTime, toTime] ripple cut to the given tracks IN PLACE (no commit): remove
+   * elements fully inside the range, shift later elements left, split/trim straddling ones, and keep
+   * caption word-timings synced (adjustCaptionWordsForTimeChange). The caller snapshots the tracks
+   * and issues exactly ONE trailing setTimelineData, so a multi-range op collapses to one undo entry.
+   */
+  /**
+   * Advance a media element's SOURCE offset (props.time) by `timelineSeconds` of removed timeline
+   * content, honoring playbackRate. This is what makes a ripple range-cut actually SKIP the cut
+   * content: shortening s/e alone shortens the timeline but keeps playing the same source region —
+   * the cut content stays in playback and real content falls off the END instead (the auto-silence
+   * "it didn't remove anything" bug). Duck-typed: only video/audio have getStartAt/setStartAt;
+   * text/images/captions are a no-op (caption words are handled by adjustCaptionWordsForTimeChange).
+   */
+  private advanceSourceOffset(element: TrackElement, timelineSeconds: number): void {
+    const el = element as unknown as {
+      getStartAt?: () => number;
+      setStartAt?: (t: number) => void;
+    };
+    if (typeof el.getStartAt === "function" && typeof el.setStartAt === "function") {
+      const rate = (element.getProps() as { playbackRate?: number } | undefined)?.playbackRate ?? 1;
+      el.setStartAt(el.getStartAt() + timelineSeconds * rate);
+    }
+  }
+
+  private applyRippleToTracks(tracks: Track[], fromTime: number, toTime: number): void {
+    if (fromTime >= toTime) return;
+    const durationToRemove = toTime - fromTime;
+    for (const newTrack of tracks) {
       const friend = newTrack.createFriend();
       const elementsCopy = newTrack.getElements();
 
@@ -1120,6 +1169,9 @@ export class TimelineEditor {
             const secondPrevStart = result.secondElement.getStart();
             const secondPrevEnd = result.secondElement.getEnd();
             result.secondElement.setEnd(fromTime + (end - toTime));
+            // The splitter anchored the second half's source at fromTime — skip the cut region too,
+            // otherwise the removed content still plays and real content falls off the end.
+            this.advanceSourceOffset(result.secondElement, durationToRemove);
             this.adjustCaptionWordsForTimeChange(result.secondElement, secondPrevStart, secondPrevEnd);
             friend.addElement(result.firstElement, true);
             friend.addElement(result.secondElement, true);
@@ -1135,13 +1187,12 @@ export class TimelineEditor {
         if (start >= fromTime && end > toTime) {
           element.setStart(fromTime);
           element.setEnd(fromTime + (end - toTime));
+          // The element's head [start → toTime] was cut away — skip that region in the SOURCE too.
+          this.advanceSourceOffset(element, toTime - start);
           this.adjustCaptionWordsForTimeChange(element, start, end);
         }
       }
-      newTracks.push(newTrack);
     }
-
-    this.setTimelineData({ tracks: newTracks, updatePlayerData: true });
   }
 
   /**
