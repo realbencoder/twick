@@ -1,4 +1,3 @@
-import { linearToDb, dbToLinear, MIN_DB, MAX_DB } from "../../helpers/volume-db";
 import type { PropertiesPanelProps } from "../../types";
 import { AccordionItem } from "../shared/accordion-item";
 import { PropertyRow } from "./property-row";
@@ -9,13 +8,20 @@ const PLAYBACK_RATE_MIN = 0.25;
 const PLAYBACK_RATE_MAX = 2;
 const PLAYBACK_RATE_STEP = 0.25;
 
+// Volume shown as PERCENT (100% = original loudness), the creator-friendly convention
+// (CapCut/Descript). The old dB display read "0 dB" at unity, which users read as "silent"
+// (founder-reported confusion). Stored prop stays LINEAR gain (volume = pct/100) — same
+// semantics the render pipeline and the timeline waveform gain already consume.
+const VOLUME_PCT_MIN = 0;
+const VOLUME_PCT_MAX = 200;
+
 export function PlaybackPropsPanel({
   selectedElement,
   updateElement,
 }: PropertiesPanelProps) {
   const elementProps = selectedElement?.getProps() || {};
   const volumeLinear = elementProps.volume ?? 1;
-  const volumeDb = linearToDb(volumeLinear);
+  const volumePct = Math.round(volumeLinear * 100);
   const playbackRate = elementProps.playbackRate ?? 1;
 
   const handleUpdateElement = (props: Record<string, any>) => {
@@ -24,8 +30,8 @@ export function PlaybackPropsPanel({
     }
   };
 
-  const handleVolumeDbChange = (db: number) => {
-    handleUpdateElement({ volume: dbToLinear(db) });
+  const handleVolumePctChange = (pct: number) => {
+    handleUpdateElement({ volume: Math.max(0, pct) / 100 });
   };
 
   const handlePlaybackRateChange = (rate: number) => {
@@ -64,24 +70,22 @@ export function PlaybackPropsPanel({
             </PropertyRow>
           </div>
 
-          {/* Volume (dB) */}
+          {/* Volume (%) — 100% = original, 0% = muted */}
           <div className="property-section">
             <PropertyRow
               label="Volume"
               secondary={
-                <span>
-                  {volumeDb <= MIN_DB ? "−∞" : `${Math.round(volumeDb)} dB`}
-                </span>
+                <span>{volumePct === 0 ? "Muted" : `${volumePct}%`}</span>
               }
             >
               <input
                 type="range"
-                min={MIN_DB}
-                max={MAX_DB}
+                min={VOLUME_PCT_MIN}
+                max={VOLUME_PCT_MAX}
                 step={1}
-                value={volumeDb}
+                value={volumePct}
                 onChange={(e) =>
-                  handleVolumeDbChange(Number(e.target.value))
+                  handleVolumePctChange(Number(e.target.value))
                 }
                 className="slider-purple"
               />
