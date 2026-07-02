@@ -143,6 +143,17 @@ export const usePlayerManager = ({
           break;
         case CANVAS_OPERATIONS.ITEM_UPDATED:
           if (element) {
+            // Locked track — the CANVAS interaction layer (Fabric.js drag/scale/rotate/text-edit) all
+            // funnels its persist through ITEM_UPDATED, so this single guard blocks moving, resizing,
+            // rotating, or re-typing a locked-track text/image/subtitle element on the video canvas
+            // (audit #2 — the `locked` prop never reached the canvas layer). Re-select so the element
+            // stays highlighted but its edit is discarded; updateCanvas snaps it back to its saved pose.
+            const _t = editor.getTrackById(element.getTrackId());
+            if ((_t?.getProps() as { locked?: boolean } | undefined)?.locked === true) {
+              setSelectedItem(element);
+              updateCanvasRef.current(getCurrentTime(), true);
+              break;
+            }
             const updatedElement = editor.updateElement(element);
             currentChangeLog.current = currentChangeLog.current + 1;
             setSelectedItem(updatedElement);
