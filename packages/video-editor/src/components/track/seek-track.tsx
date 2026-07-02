@@ -160,19 +160,23 @@ export default function SeekTrack({
     [duration, ts, seekToTime]
   );
 
-  // LIVE DRAG-SCRUB (ship-dark). Enabled per session via ?liveScrub=1 or localStorage
-  // __editorLiveScrub='1', or globally by the app setting window.__editorLiveScrub=true. When OFF,
-  // the drag behaves EXACTLY as before (seek only on release). Read once on mount.
-  const liveScrubRef = React.useRef(false);
+  // LIVE DRAG-SCRUB — now DEFAULT ON: dragging the playhead updates the preview continuously
+  // (CapCut/Premiere behavior) instead of only on release. Safe on any machine because the paused
+  // scrub uses the pre-generated storyboard/filmstrip tile floor (pure drawImage, no decode) — a
+  // weak GPU degrades to thumbnails-while-dragging, never a freeze or black flash. Escape hatch:
+  // set ?liveScrub=0, localStorage __editorLiveScrub='0', or window.__editorLiveScrub=false to
+  // restore the old seek-on-release behavior. Read once on mount.
+  const liveScrubRef = React.useRef(true);
   React.useEffect(() => {
     try {
       const w = window as unknown as { __editorLiveScrub?: boolean };
-      liveScrubRef.current =
-        w.__editorLiveScrub === true ||
-        (typeof localStorage !== "undefined" && localStorage.getItem("__editorLiveScrub") === "1") ||
-        new URLSearchParams(window.location.search).get("liveScrub") === "1";
+      const disabled =
+        w.__editorLiveScrub === false ||
+        (typeof localStorage !== "undefined" && localStorage.getItem("__editorLiveScrub") === "0") ||
+        new URLSearchParams(window.location.search).get("liveScrub") === "0";
+      liveScrubRef.current = !disabled;
     } catch {
-      liveScrubRef.current = false;
+      liveScrubRef.current = true;
     }
   }, []);
   // rAF-throttle so a fast pointer emits at most one seek per frame (always the LATEST target).

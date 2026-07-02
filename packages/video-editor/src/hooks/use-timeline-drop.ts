@@ -189,8 +189,14 @@ export function createElementFromDrop(
   parentSize: Size
 ): VideoElement | AudioElement | ImageElement {
   switch (type) {
-    case "video":
-      return new VideoElement(blobUrl, parentSize);
+    case "video": {
+      const el = new VideoElement(blobUrl, parentSize);
+      // B-roll / stock video dragged onto the timeline defaults MUTED (rule #21) — matches the
+      // click-add default. The drag path previously left it at full volume, so stock ambient audio
+      // competed with the voiceover (audit #4). The creator can un-mute via the volume slider.
+      el.setVolume(0);
+      return el;
+    }
     case "audio":
       return new AudioElement(blobUrl);
     case "image":
