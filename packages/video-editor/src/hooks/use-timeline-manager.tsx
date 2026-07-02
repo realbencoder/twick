@@ -90,14 +90,27 @@ export const useTimelineManager = (): TimelineManagerReturn => {
       const resolved = resolveIds(selectedIds, tracks);
       const elements = resolved.filter((item): item is TrackElement => item instanceof TrackElement);
       if (elements.length > 1) {
-        const minStart = Math.min(...elements.map((el) => el.getStart()));
-        const maxEnd = Math.max(...elements.map((el) => el.getEnd()));
+        // MAGNETIC MAIN TRACK: main-recording clips are GLUED (see the MOVE pin in
+        // track-element.tsx) — exclude them from batch moves too, otherwise a cross-track
+        // marquee drag (e.g. grab a caption while a video clip is co-selected) displaces the
+        // recording, leaves a main-track gap the gate can't see, and a LATER unrelated drag
+        // closes it with a surprise caption ripple (adversarial-review finding #2).
+        const isMainTrackEl = (el: TrackElement) =>
+          (editor.getTrackById(el.getTrackId()) as any)?.getName?.() === "Video";
+        const movable = elements.filter((el) => !isMainTrackEl(el));
+        if (movable.length === 0) {
+          setSelectedItem(element);
+          editor.refresh();
+          return;
+        }
+        const minStart = Math.min(...movable.map((el) => el.getStart()));
+        const maxEnd = Math.max(...movable.map((el) => el.getEnd()));
         const delta = updates.start - element.getStart();
         const deltaMin = -minStart;
         const deltaMax = duration - maxEnd;
         const clampedDelta = Math.max(deltaMin, Math.min(deltaMax, delta));
 
-        const batchUpdates = elements.map((el) => ({
+        const batchUpdates = movable.map((el) => ({
           elementId: el.getId(),
           updates: {
             s: el.getStart() + clampedDelta,
@@ -108,6 +121,7 @@ export const useTimelineManager = (): TimelineManagerReturn => {
         editor.updateElements(batchUpdates);
         setSelectedItem(element);
         editor.refresh();
+        closeMainTrackGapsIfNeeded(element);
         return;
       }
     }
@@ -188,6 +202,29 @@ export const useTimelineManager = (): TimelineManagerReturn => {
     }
     setSelectedItem(element);
     editor.refresh();
+    closeMainTrackGapsIfNeeded(element);
+  };
+
+  /**
+   * MAGNETIC MAIN TRACK: after any drag commit on the main "Video" track, close every gap
+   * (including the leading one at t=0) so the recording is always contiguous from 0:00 — dragging
+   * a clip toward the start snaps it flush, trimming a clip's head pulls everything left, and no
+   * black dead-space can be left behind (founder-reported UX bug). Overlay/B-roll/text tracks are
+   * NOT normalized — they're free-floating by design. Fire-and-forget: closeVideoTrackGaps is a
+   * separate one-undo commit (undo #1 reopens the gap, undo #2 reverts the drag). Duck-typed so a
+   * stale vendored/node_modules timeline build degrades to today's behavior instead of throwing.
+   */
+  const closeMainTrackGapsIfNeeded = (element: TrackElement) => {
+    try {
+      const track = editor.getTrackById(element.getTrackId());
+      if (!track || (track as any).getName?.() !== "Video") return;
+      const close = (editor as any).closeVideoTrackGaps;
+      if (typeof close === "function") {
+        Promise.resolve(close.call(editor)).catch(() => {});
+      }
+    } catch {
+      /* non-fatal — magnetic close is an enhancement, never break the drag commit */
+    }
   };
 
   /** Cross-track drop is only allowed when track type is element (not video/audio). */

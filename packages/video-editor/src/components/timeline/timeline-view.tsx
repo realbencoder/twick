@@ -11,7 +11,7 @@ import { useTimelineDrop } from "../../hooks/use-timeline-drop";
 import { useEdgeAutoScroll } from "../../hooks/use-edge-auto-scroll";
 import { MarqueeOverlay } from "./marquee-overlay";
 import { getTrackOrSeparatorAt, type DropTarget } from "../../utils/drop-target";
-import { useTimeScale, LABEL_WIDTH, SEPARATOR_HEIGHT } from "../../helpers/time-scale";
+import { useTimeScale, createTimeScale, LABEL_WIDTH, SEPARATOR_HEIGHT } from "../../helpers/time-scale";
 import { getSnapTargets as computeSnapTargets } from "../../helpers/snap-targets";
 import type { Size } from "@twick/timeline";
 import type { ChapterMarker } from "@twick/timeline";
@@ -184,28 +184,54 @@ function TimelineView({
   // Single source of truth for time <-> pixel geometry (matches the clip frame).
   const timeScale = useTimeScale(zoomLevel, duration);
 
-  // Keep playhead centered when zoom changes
+  // ANCHOR-PRESERVING zoom (no jump): the previous version force-CENTERED the playhead on every
+  // zoom change, so if the playhead sat at 20% of the viewport (or off-screen) the whole timeline
+  // visibly leapt (founder-reported). Gold standard: the point under the user's eye stays put —
+  // if the playhead is visible, it keeps its exact viewport position; if not, the time at the
+  // viewport center stays at the center. Computed against the PREVIOUS zoom's scale.
   const prevZoomRef = useRef(zoomLevel);
+  // Pre-zoom scroll truth: on zoom-OUT the content width shrinks in the SAME commit, so by the
+  // time this effect reads container.scrollLeft the browser has already CLAMPED it to the new,
+  // smaller max — computing the anchor from the clamped value threw the view backwards when
+  // zoomed out near the right edge (adversarial-review finding #3). handleScroll keeps this ref
+  // at the last REAL pre-zoom scroll position; the clamp's own scroll event fires after paint,
+  // i.e. after this effect already consumed the ref.
+  const lastScrollLeftRef = useRef(0);
   useEffect(() => {
-    if (prevZoomRef.current !== zoomLevel && containerRef.current) {
-      const container = containerRef.current;
-      const viewportWidth = container.clientWidth;
-      // Calculate where the playhead is in the new zoom
-      const playheadPx = timeScale.timeToContentX(currentTime);
-      // Center the playhead in the viewport
-      const newScroll = Math.max(0, playheadPx - viewportWidth / 2);
-      container.scrollLeft = newScroll;
-      // Also sync the seek container
-      if (seekContainerRef.current) {
-        seekContainerRef.current.scrollLeft = newScroll;
-      }
-    }
+    const prevZoom = prevZoomRef.current;
     prevZoomRef.current = zoomLevel;
+    if (prevZoom === zoomLevel || !containerRef.current) return;
+    const container = containerRef.current;
+    const viewportWidth = container.clientWidth;
+    const prevScale = createTimeScale(prevZoom, duration);
+    const oldScroll = lastScrollLeftRef.current;
+
+    const prevPlayheadPx = prevScale.timeToContentX(currentTime);
+    const playheadOffset = prevPlayheadPx - oldScroll; // where the playhead WAS on screen
+    const playheadVisible = playheadOffset >= 0 && playheadOffset <= viewportWidth;
+
+    let newScroll: number;
+    if (playheadVisible) {
+      // Keep the playhead at its exact current on-screen position.
+      newScroll = timeScale.timeToContentX(currentTime) - playheadOffset;
+    } else {
+      // Playhead off-screen: keep the TIME at the viewport center stationary instead.
+      const centerTime = prevScale.contentXToTime(oldScroll + viewportWidth / 2);
+      newScroll = timeScale.timeToContentX(centerTime) - viewportWidth / 2;
+    }
+    newScroll = Math.max(0, newScroll);
+    container.scrollLeft = newScroll;
+    lastScrollLeftRef.current = container.scrollLeft; // post-assign (browser may clamp) = new truth
+    // Also sync the seek container
+    if (seekContainerRef.current) {
+      seekContainerRef.current.scrollLeft = newScroll;
+    }
   }, [zoomLevel, currentTime, duration]);
 
   // Sync scroll between seek container and timeline container
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const scrollPosition = e.currentTarget.scrollLeft;
+    lastScrollLeftRef.current = scrollPosition;
     setScrollLeft(scrollPosition);
 
     // Update all containers to the same scroll position

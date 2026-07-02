@@ -258,6 +258,18 @@ export const TrackElementView = memo(({
           newStart = nextStart - span;
         }
       }
+      // MAGNETIC MAIN TRACK: main-recording clips are GLUED edge-to-edge (their position comes
+      // from clip order, not free placement) until drag-to-REORDER ships. A free rightward MOVE
+      // creates a displacement gap whose auto-close ripples caption/overlay tracks — silently
+      // deleting/desyncing captions while the video snaps back looking untouched (adversarial-
+      // review finding). So MOVE pins the clip to its magnetic slot; the START/END trim handles
+      // remain the editing surface for main clips.
+      if (isMainVideoTrack) {
+        newStart = prevEnd !== null ? prevEnd : 0;
+        const pinnedEnd = newStart + span;
+        if (pinnedEnd <= newStart) return prev;
+        return { start: newStart, end: pinnedEnd };
+      }
       // Magnetic snap: snap whichever edge (start OR end) sits closest to a target, preserving the
       // clip's span, then re-honor the neighbor clamps (a clamp override cancels the snap).
       if (snapTargets.length) {
