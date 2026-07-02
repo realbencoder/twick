@@ -126,6 +126,23 @@ export const useCaptionsPanel = () => {
     const elements = captionsTrack.current.getElements();
     if (index >= elements.length) return;
     const element = elements[index] as CaptionElement;
+    // Gate: adjust is only MEANINGFUL when the word count no longer matches wordsMs (Case 2 regen).
+    // Same-count is a mathematical no-op (equal window ⟹ zero delta), and blur fires on every
+    // focus-out — without this gate, a no-edit click-through would still call updateElement and
+    // pollute undo history with an empty commit. Tokenize the same way the editor method does.
+    const props = (element.getProps() ?? {}) as Record<string, unknown>;
+    const meta = (element.getMetadata?.() ?? {}) as Record<string, unknown>;
+    const wordsArr = Array.isArray(props.wordsMs)
+      ? (props.wordsMs as unknown[])
+      : Array.isArray(meta.wordsMs)
+      ? (meta.wordsMs as unknown[])
+      : null;
+    if (!wordsArr) return; // manual caption — nothing to re-sync
+    const wordCount = String(element.getText() ?? "")
+      .split(" ")
+      .map((w) => w.trim())
+      .filter((w) => w.length > 0).length;
+    if (wordCount === 0 || wordsArr.length === wordCount) return; // in sync — no commit
     editor.adjustCaptionWordsForTimeChange(
       element,
       element.getStart(),
