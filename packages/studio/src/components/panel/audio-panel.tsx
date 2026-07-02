@@ -60,7 +60,10 @@ export const AudioPanel = ({
             <div
               key={item.id}
               draggable
-              onDoubleClick={() => onItemSelect(item)}
+              // Always ADD (forceAdd=true) — matches the "+" button and drag-drop. Without this,
+              // double-clicking a media item while a clip is selected REPLACES that clip's source
+              // (silent data loss). To swap a source, use an explicit replace affordance, not a click.
+              onDoubleClick={() => onItemSelect(item, true)}
               onDragStart={(e) => {
                 e.dataTransfer.setData(
                   TIMELINE_DROP_MEDIA_TYPE,

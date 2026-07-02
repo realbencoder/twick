@@ -5,7 +5,7 @@ import { Ruler, ArrowUp, ArrowDown } from "lucide-react";
 import { AccordionItem } from "../shared/accordion-item";
 import { useState, useRef, useEffect } from "react";
 
-export function ElementProps({ selectedElement, updateElement, onBringForward, onSendBackward }: PropertiesPanelProps & { onBringForward?: () => void; onSendBackward?: () => void }) {
+export function ElementProps({ selectedElement, updateElement, onBringForward, onSendBackward, canBringForward = true, canSendBackward = true }: PropertiesPanelProps & { onBringForward?: () => void; onSendBackward?: () => void; canBringForward?: boolean; canSendBackward?: boolean }) {
   const opacity = selectedElement?.getOpacity() || 1;
   const rotation = selectedElement?.getRotation() || 0;
   const position = selectedElement?.getPosition() || { x: 0, y: 0 };
@@ -229,18 +229,20 @@ export function ElementProps({ selectedElement, updateElement, onBringForward, o
                 <button
                   type="button"
                   onClick={onBringForward}
+                  disabled={!canBringForward}
                   className="btn-ghost"
-                  title="Bring forward"
-                  style={{ padding: '4px 8px', fontSize: '11px' }}
+                  title={canBringForward ? "Bring forward" : "Already at the front"}
+                  style={{ padding: '4px 8px', fontSize: '11px', opacity: canBringForward ? 1 : 0.4, cursor: canBringForward ? 'pointer' : 'not-allowed' }}
                 >
                   <ArrowUp className="icon-sm" /> Front
                 </button>
                 <button
                   type="button"
                   onClick={onSendBackward}
+                  disabled={!canSendBackward}
                   className="btn-ghost"
-                  title="Send backward"
-                  style={{ padding: '4px 8px', fontSize: '11px' }}
+                  title={canSendBackward ? "Send backward" : "Already at the back"}
+                  style={{ padding: '4px 8px', fontSize: '11px', opacity: canSendBackward ? 1 : 0.4, cursor: canSendBackward ? 'pointer' : 'not-allowed' }}
                 >
                   <ArrowDown className="icon-sm" /> Back
                 </button>

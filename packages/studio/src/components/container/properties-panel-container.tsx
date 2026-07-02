@@ -67,6 +67,21 @@ export function PropertiesPanelContainer({
     }
   }, [selectedElement, present, editor]);
 
+  // Whether Front/Back can actually move the selected element — mirrors the boundary guards in
+  // handleBringForward (trackIdx > 0) and handleSendBackward (trackIdx < tracks.length - 1) EXACTLY,
+  // computed against present.tracks (the same list the handlers swap within, incl. caption tracks),
+  // so we never disable a button that would in fact reorder, and never leave one enabled at the
+  // stacking boundary where it silently no-ops. -1 (element not found) disables both.
+  const selectedTrackIdx =
+    selectedElement && present?.tracks
+      ? present.tracks.findIndex((t: any) =>
+          t.elements?.some((e: any) => e.id === selectedElement.getId())
+        )
+      : -1;
+  const canBringForward = selectedTrackIdx > 0;
+  const canSendBackward =
+    selectedTrackIdx >= 0 && selectedTrackIdx < (present?.tracks?.length ?? 0) - 1;
+
   const handleBackgroundColorChange = useCallback(
     (value: string) => {
       editor.setBackgroundColor(value);
@@ -182,6 +197,8 @@ export function PropertiesPanelContainer({
                         updateElement={updateElement}
                         onBringForward={handleBringForward}
                         onSendBackward={handleSendBackward}
+                        canBringForward={canBringForward}
+                        canSendBackward={canSendBackward}
                       />
                     )}
 

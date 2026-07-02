@@ -14,7 +14,7 @@ import {
   Crosshair,
 } from "lucide-react";
 import { UndoRedoControls } from "./undo-redo-controls";
-import { TrackElement, Track, formatTimeWithFrames } from "@twick/timeline";
+import { TrackElement, Track, formatTimeWithFrames, canSplitElement } from "@twick/timeline";
 import { TimelineZoomConfig } from "../video-editor";
 import {
   DEFAULT_TIMELINE_ZOOM_CONFIG,
@@ -135,11 +135,16 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
 
   const hasSelection = selectedIds.size > 0;
 
+  // Split only works when the playhead is strictly INSIDE the selected clip (canSplitElement — the
+  // same validator splitElement uses). Outside, split is a silent no-op; gate the button on it so
+  // the affordance tells the truth (disabled + "move playhead over the clip" tooltip).
+  const canSplit =
+    selectedItem instanceof TrackElement && canSplitElement(selectedItem, currentTime);
   const handleSplit = useCallback(() => {
-    if (selectedItem instanceof TrackElement && onSplit) {
+    if (canSplit && onSplit) {
       onSplit(selectedItem as TrackElement, currentTime);
     }
-  }, [selectedItem, onSplit, currentTime]);
+  }, [canSplit, selectedItem, onSplit, currentTime]);
 
   const handleZoomIn = useCallback(() => {
     if (setZoomLevel && zoomLevel < MAX_ZOOM) {
@@ -175,11 +180,15 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
 
         <button
           onClick={handleSplit}
-          disabled={!(selectedItem instanceof TrackElement)}
-          title="Split"
-          className={`control-btn split-btn ${
-            !(selectedItem instanceof TrackElement) ? "btn-disabled" : ""
-          }`}
+          disabled={!canSplit}
+          title={
+            !(selectedItem instanceof TrackElement)
+              ? "Select a clip to split"
+              : !canSplit
+              ? "Move the playhead over the selected clip to split it"
+              : "Split at playhead"
+          }
+          className={`control-btn split-btn ${!canSplit ? "btn-disabled" : ""}`}
         >
           <Scissors className="icon-md" />
         </button>

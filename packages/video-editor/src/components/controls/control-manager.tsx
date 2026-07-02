@@ -1,6 +1,6 @@
 import { useLivePlayerContext } from "@twick/live-player";
 import PlayerControls from "./player-controls";
-import { TrackElement, useTimelineContext } from "@twick/timeline";
+import { TrackElement, canSplitElement, useTimelineContext } from "@twick/timeline";
 import { usePlayerControl } from "../../hooks/use-player-control";
 import useTimelineControl from "../../hooks/use-timeline-control";
 import { useCanvasKeyboard } from "../../hooks/use-canvas-keyboard";
@@ -41,8 +41,10 @@ const ControlManager = ({
     onUndo: () => handleUndo(),
     onRedo: () => handleRedo(),
     onSplit: () => {
-      // Split the selected clip at the playhead (mirrors the Split button).
-      if (selectedItem instanceof TrackElement) {
+      // Split the selected clip at the playhead (mirrors the Split button). Guard with the same
+      // validator the button uses — the keyboard shortcut must not silently no-op when the playhead
+      // is outside the selected clip (Cmd/Ctrl+B or S can fire regardless of the button's disabled state).
+      if (selectedItem instanceof TrackElement && canSplitElement(selectedItem, currentTime)) {
         splitElement(selectedItem, currentTime);
       }
     },
