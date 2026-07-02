@@ -1143,6 +1143,184 @@ export class TimelineEditor {
   }
 
   /**
+   * Reorder one clip on the magnetic MAIN track (the track NAMED `trackName` — never resolved by
+   * getType(), which also matches B-roll video tracks) to insertion slot `toSlot` (PRE-removal
+   * indexing, 0..N). The track is re-laid contiguously from 0 by PREFIX-SUM construction (self-heals
+   * float drift; no delta-shifting), element array rebuilt in the new order, and captions follow
+   * their CONTENT as a segment permutation: straddlers of any δ-change boundary are split first
+   * (ElementSplitter — the #66/#69 word-partition machinery), then each caption/piece is assigned to
+   * the old segment containing its midpoint and translated by that segment's δ (word timings shifted
+   * via adjustCaptionWordsForTimeChange — pure translation, never a squeeze). Source offsets
+   * (props.time / getStartAt) are NEVER touched: reorder is a permutation, not a cut — each clip
+   * carries its own source window with it. Overlays/B-roll/text/music stay timeline-pinned (product
+   * decision 2026-07-01); elements intersecting a moved segment are only COUNTED so the UI can show
+   * a one-time "overlays stay put" toast.
+   *
+   * Commit discipline: identity drops (toSlot === i || i+1), unknown ids, and <2-element tracks
+   * return BEFORE cloning — no setTimelineData, no history entry, no autosave. An effective move is
+   * exactly ONE trailing setTimelineData = one undo snapshot = one autosave (same contract as
+   * rippleDeleteRanges).
+   */
+  reorderMainTrackElement(
+    elementId: string,
+    toSlot: number,
+    trackName = "Video"
+  ): { moved: boolean; overlaysPinnedCount: number } {
+    const noMove = { moved: false, overlaysPinnedCount: 0 };
+    const currentTracks = this.getTimelineData()?.tracks ?? [];
+    const liveMain = currentTracks.find((t) => t.getName() === trackName);
+    if (!liveMain) return noMove;
+
+    const liveEls = [...liveMain.getElements()].sort((a, b) => a.getStart() - b.getStart());
+    const N = liveEls.length;
+    if (N < 2) return noMove;
+    const i = liveEls.findIndex((el) => el.getId() === elementId);
+    if (i === -1) return noMove;
+    if (!Number.isFinite(toSlot)) return noMove;
+    const slot = Math.max(0, Math.min(N, Math.round(toSlot)));
+    // Identity slots: `i` = "insert before itself", `i + 1` = "insert after itself". Return before
+    // cloning — a visible caret is never shown at these slots, and committing here would be the
+    // phantom-one-slot-move off-by-one.
+    if (slot === i || slot === i + 1) return noMove;
+
+    // Deep-clone ALL tracks — never mutate live state (same as rippleDelete/rippleDeleteRanges).
+    const newTracks = currentTracks.map((t) => Track.fromJSON(t.serialize()));
+    const main = newTracks.find((t) => t.getName() === trackName);
+    if (!main) return noMove;
+    const els = [...main.getElements()].sort((a, b) => a.getStart() - b.getStart());
+    if (els.length !== N) return noMove;
+
+    const EPS = 5e-3;
+    const oldS = els.map((el) => el.getStart());
+    const oldE = els.map((el) => el.getEnd());
+    const spans = els.map((_, j) => oldE[j] - oldS[j]);
+
+    // Permuted order: remove index i, insert at k (post-removal indexing).
+    const k = slot > i ? slot - 1 : slot;
+    const order = els.map((_, j) => j).filter((j) => j !== i);
+    order.splice(k, 0, i);
+
+    // Re-lay from prefix sums — contiguous-from-0 true by construction.
+    const newS = new Array<number>(N).fill(0);
+    const newE = new Array<number>(N).fill(0);
+    let pos = 0;
+    for (const j of order) {
+      newS[j] = pos;
+      newE[j] = pos + spans[j];
+      pos += spans[j];
+    }
+    const delta = els.map((_, j) => newS[j] - oldS[j]);
+
+    // Apply to the main track: new s/e + element array rebuilt in the new order. Source offsets
+    // (props.time) travel with each clip untouched.
+    const mainFriend = main.createFriend();
+    for (const el of els) mainFriend.removeElement(el);
+    for (const j of order) {
+      const el = els[j];
+      el.setStart(newS[j]);
+      el.setEnd(newE[j]);
+      mainFriend.addElement(el, true);
+    }
+
+    // Captions follow content: split at δ-change boundaries, then translate per segment.
+    for (const track of newTracks) {
+      if (track.getType() !== TRACK_TYPES.CAPTION) continue;
+      const friend = track.createFriend();
+      const caps = [...track.getElements()];
+      for (const cap of caps) {
+        const cs = cap.getStart();
+        const ce = cap.getEnd();
+        // Untouched fast-path: degenerate or entirely outside the main span.
+        if (!(ce > cs) || ce <= oldS[0] + EPS || cs >= oldE[N - 1] - EPS) continue;
+
+        // Split each piece at every interior boundary where the two sides move differently.
+        let pieces: TrackElement[] = [cap];
+        for (let j = 0; j < N - 1; j++) {
+          if (Math.abs(delta[j] - delta[j + 1]) <= EPS) continue;
+          const b = oldE[j];
+          const nextPieces: TrackElement[] = [];
+          for (const piece of pieces) {
+            const ps = piece.getStart();
+            const pe = piece.getEnd();
+            if (ps < b - EPS && pe > b + EPS) {
+              const splitter = new ElementSplitter(b);
+              const result: SplitResult = piece.accept(splitter);
+              if (result.success && result.firstElement && result.secondElement) {
+                friend.removeElement(piece);
+                friend.addElement(result.firstElement, true);
+                friend.addElement(result.secondElement, true);
+                nextPieces.push(result.firstElement, result.secondElement);
+              } else {
+                // Splitter refuses single-word captions rather than emit an empty side — leave
+                // whole; midpoint assignment below IS majority-overlap for a straddler.
+                nextPieces.push(piece);
+              }
+            } else {
+              nextPieces.push(piece);
+            }
+          }
+          pieces = nextPieces;
+        }
+
+        // Assign each piece to the old segment containing its midpoint (half-open [s, e), last
+        // segment closed) and translate by that segment's δ.
+        for (const piece of pieces) {
+          const ps = piece.getStart();
+          const pe = piece.getEnd();
+          const mid = (ps + pe) / 2;
+          let segIdx = -1;
+          for (let j = 0; j < N; j++) {
+            if (mid < oldE[j]) {
+              segIdx = j;
+              break;
+            }
+          }
+          if (segIdx === -1) segIdx = N - 1;
+          const d = delta[segIdx];
+          if (Math.abs(d) <= EPS) continue;
+          // Clamp into [0, ∞): a split-refused single-word straddler assigned by majority can
+          // poke past its segment's old window, and a leftward δ could push it negative. Keep
+          // ≥0.01s duration (same floor the element validator enforces).
+          const ns = Math.max(0, ps + d);
+          const ne = Math.max(ns + 0.01, pe + d);
+          piece.setStart(ns);
+          piece.setEnd(ne);
+          this.adjustCaptionWordsForTimeChange(piece, ps, pe);
+          console.debug(
+            "[reorder] caption",
+            piece.getId(),
+            "seg",
+            segIdx,
+            "→ newStart",
+            (ps + d).toFixed(3),
+            "δ",
+            d.toFixed(3)
+          );
+        }
+      }
+    }
+
+    // Overlays stay pinned — count elements intersecting any moved (δ ≠ 0) old-segment window so
+    // the UI can show the one-time toast.
+    let overlaysPinnedCount = 0;
+    for (const track of newTracks) {
+      if (track.getName() === trackName || track.getType() === TRACK_TYPES.CAPTION) continue;
+      for (const el of track.getElements()) {
+        const s = el.getStart();
+        const e = el.getEnd();
+        const hit = els.some(
+          (_, j) => Math.abs(delta[j]) > EPS && s < oldE[j] - EPS && e > oldS[j] + EPS
+        );
+        if (hit) overlaysPinnedCount++;
+      }
+    }
+
+    // Single commit: one undo snapshot, one autosave, one UPDATE_PLAYER_DATA.
+    this.setTimelineData({ tracks: newTracks, updatePlayerData: true });
+    return { moved: true, overlaysPinnedCount };
+  }
+
+  /**
    * Apply a single [fromTime, toTime] ripple cut to the given tracks IN PLACE (no commit): remove
    * elements fully inside the range, shift later elements left, split/trim straddling ones, and keep
    * caption word-timings synced (adjustCaptionWordsForTimeChange). The caller snapshots the tracks
