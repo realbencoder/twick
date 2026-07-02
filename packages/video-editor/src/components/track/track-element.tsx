@@ -63,6 +63,13 @@ interface TrackElementViewProps {
    * audio only, so B-roll/overlay video elements must never draw it.
    */
   isMainVideoTrack?: boolean;
+  /**
+   * True when this element's TRACK is locked (the padlock in the track header). Locked clips must
+   * not move, trim, or delete — the lock previously only toggled a CSS class + blocked row reorder,
+   * so clips inside a "locked" track stayed fully editable (the padlock lied). Gates the drag/trim
+   * binds here; delete/split are gated in use-timeline-manager.
+   */
+  locked?: boolean;
 }
 
 // Memoized (see track-base): a clip is independent of the playhead tick, so with stable props from
@@ -84,6 +91,7 @@ export const TrackElementView = memo(({
   elementColors,
   getSnapTargets,
   isMainVideoTrack = false,
+  locked = false,
 }: TrackElementViewProps) => {
   const ref = useRef<HTMLDivElement>(null);
   const dragType = useRef<string | null>(null);
@@ -233,6 +241,7 @@ export const TrackElementView = memo(({
   };
 
   const bind = useDrag(({ delta: [dx], event }) => {
+    if (locked) return; // locked track — clips can't be moved
     if (!parentWidth) return;
     if (dx == 0) return;
     // Don't start a move if user is dragging a handle
@@ -300,6 +309,7 @@ export const TrackElementView = memo(({
   });
 
   const bindStartHandle = useDrag(({ delta: [dx], event, last }) => {
+    if (locked) return; // locked track — clips can't be trimmed
     if (event) {
       event.stopPropagation();
     }
@@ -328,6 +338,7 @@ export const TrackElementView = memo(({
   });
 
   const bindEndHandle = useDrag(({ delta: [dx], event, last }) => {
+    if (locked) return; // locked track — clips can't be trimmed
     if (event) {
       event.stopPropagation();
     }
@@ -434,7 +445,7 @@ export const TrackElementView = memo(({
       isSelected
         ? "twick-track-element-selected"
         : "twick-track-element-default"
-    } ${isDragging ? "twick-track-element-dragging" : ""}`,
+    } ${isDragging ? "twick-track-element-dragging" : ""} ${locked ? "twick-track-element-locked" : ""}`,
     onMouseDown: (e) => {
       if (e.target === ref.current) {
         setLastPos();
@@ -457,6 +468,9 @@ export const TrackElementView = memo(({
       width: `${((position.end - position.start) / duration) * 100}%`,
       left: `${(position.start / duration) * 100}%`,
       touchAction: "none",
+      // Locked clips get a not-allowed cursor + slight dim so a drag-that-does-nothing reads as
+      // "protected", not "broken" (drag/trim/delete/split are all gated when locked).
+      ...(locked ? { cursor: "not-allowed", opacity: 0.6 } : {}),
       ...(thumbUrl ? {
         backgroundImage: `url(${thumbUrl})`,
         backgroundSize: 'cover',

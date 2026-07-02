@@ -68,6 +68,7 @@ const TrackBase = memo(({
           elementColors={elementColors}
           getSnapTargets={getSnapTargets}
           isMainVideoTrack={track.getName?.() === "Video"}
+          locked={(track.getProps() as { locked?: boolean } | undefined)?.locked === true}
           nextStart={
             index < elements.length - 1
               ? elements[index + 1].getStart()

@@ -39,10 +39,14 @@ const useTimelineControl = () => {
         ? [item]
         : resolveIds(selectedIds, tracks);
 
+    const isTrackLocked = (t?: Track | null) =>
+      (t?.getProps() as { locked?: boolean } | undefined)?.locked === true;
     for (const el of toDelete) {
       if (el instanceof Track) {
+        if (isTrackLocked(el)) continue; // locked track — don't delete it
         editor.removeTrack(el);
       } else if (el instanceof TrackElement) {
+        if (isTrackLocked(editor.getTrackById(el.getTrackId()))) continue; // clip on a locked track — don't delete
         editor.rippleRemoveElement(el);
       }
     }
@@ -64,6 +68,9 @@ const useTimelineControl = () => {
    * ```
    */
   const splitElement = async (element: TrackElement, currentTime: number) => {
+    // Locked track — clips can't be split (the padlock protects the whole track's content).
+    const _elTrack = editor.getTrackById(element.getTrackId());
+    if ((_elTrack?.getProps() as { locked?: boolean } | undefined)?.locked === true) return;
     // Split the element AND cascade to spanning captions as ONE atomic undo step. A video cut splits
     // the captions sitting on top of it (so they stay in sync); a single Cmd+Z must reverse the whole
     // thing. The old code looped editor.splitElement per caption, each snapshotting history, so undo
