@@ -1,5 +1,4 @@
 import { RectElement, CircleElement, ImageElement, VideoElement, TrackElement } from "@twick/timeline";
-import { getVideoMeta, getImageDimensions } from "@twick/media-utils";
 import type { PropertiesPanelProps } from "../../types";
 import { PropertyRow } from "./property-row";
 import { Ruler, ArrowUp, ArrowDown } from "lucide-react";
@@ -11,62 +10,27 @@ export function ElementProps({ selectedElement, updateElement, onBringForward, o
   const rotation = selectedElement?.getRotation() || 0;
   const position = selectedElement?.getPosition() || { x: 0, y: 0 };
 
-  // Scale: track via local state for smooth slider interaction.
-  // "100% = NATIVE resolution" (Premiere-style, Ben's decision 2026-07-02): the slider % is anchored
-  // to the media's intrinsic size, NOT the current display size — so the same physical size always
-  // reads the same %, consistent across re-selects and after Zoom-to-Fit. (Was: baselined off the
-  // current frame.size + hardcoded 100%, which drifted per select.)
+  // Scale: track via local state for smooth slider interaction
   const hasFrame = selectedElement instanceof ImageElement || selectedElement instanceof VideoElement;
   const frame = hasFrame ? (selectedElement as any).getFrame?.() : null;
-  // Native intrinsic [w,h] — the source of truth for "100%". Resolved async on select (media-utils
-  // caches by URL). baseSizeRef is the PROVISIONAL fallback (today's behavior) used only until native
-  // resolves, so the slider works immediately with no dead state.
-  const nativeSizeRef = useRef<[number, number] | null>(null);
   const baseSizeRef = useRef<[number, number] | null>(null);
-  const selectTokenRef = useRef(0);
   const [scalePercent, setScalePercent] = useState(100);
 
-  // On select: provisional baseline immediately, then resolve native size and re-derive the true %.
+  // Capture the initial size when element is first selected
   useEffect(() => {
-    const token = ++selectTokenRef.current; // invalidate any in-flight resolve from a prior selection
-    nativeSizeRef.current = null;
     if (hasFrame && frame?.size) {
       baseSizeRef.current = [...frame.size] as [number, number];
-      setScalePercent(100); // provisional until native resolves (usually sub-frame — src already loaded)
-    } else {
-      baseSizeRef.current = null;
-    }
-    const el = selectedElement as any;
-    const src: string | undefined = el?.getProps?.()?.src; // VideoElement.getSrc exists; ImageElement doesn't — read props uniformly
-    const resolver =
-      selectedElement instanceof VideoElement ? getVideoMeta :
-      selectedElement instanceof ImageElement ? getImageDimensions : null;
-    if (hasFrame && src && resolver) {
-      resolver(src)
-        .then((meta: { width?: number; height?: number }) => {
-          if (selectTokenRef.current !== token) return; // selection changed while resolving — drop
-          if (!meta?.width || !meta?.height) return;
-          nativeSizeRef.current = [meta.width, meta.height];
-          // LINEAR ratio: the slider scales BOTH dims by one uniform factor, so % = width / nativeWidth
-          // (NOT area). Read the frame fresh (not the stale closure) in case it changed during resolve.
-          const cur = el.getFrame?.()?.size as [number, number] | undefined;
-          if (cur && cur[0]) setScalePercent(Math.round((cur[0] / meta.width) * 100));
-        })
-        .catch(() => { /* keep provisional baseline — no throw, no flash to a dead state */ });
+      setScalePercent(100);
     }
     return () => { baseSizeRef.current = null; };
   }, [selectedElement]);
 
   const handleScaleChange = (percent: number) => {
-    if (!selectedElement || !hasFrame || !frame) return;
+    if (!selectedElement || !hasFrame || !frame || !baseSizeRef.current) return;
     setScalePercent(percent);
     const factor = percent / 100;
-    // Scale off NATIVE size when known (100% = native res); fall back to the captured display size
-    // until native resolves so the slider still works on the very first frames after select.
-    const base = nativeSizeRef.current ?? baseSizeRef.current;
-    if (!base) return;
-    const newW = Math.round(base[0] * factor);
-    const newH = Math.round(base[1] * factor);
+    const newW = Math.round(baseSizeRef.current[0] * factor);
+    const newH = Math.round(baseSizeRef.current[1] * factor);
     (selectedElement as any).setFrame?.({ ...frame, size: [newW, newH] });
     updateElement?.(selectedElement as TrackElement);
   };
