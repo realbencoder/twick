@@ -375,6 +375,11 @@ export const TrackElementView = memo(({
   };
 
   const sendUpdate = (e?: React.MouseEvent | React.TouchEvent) => {
+    // Locked track — bail on mouse/touch-up entirely. The `bind` guard only skips the position
+    // update; the native onMouseUp still fires sendUpdate, and a cross-track RELEASE is routed by
+    // the drop coordinate (not by whether the clip moved), so without this a locked clip could be
+    // dragged onto another track (audit #2 — cross-track bypass).
+    if (locked) return;
     let dropPointer: DropPointer | undefined;
     if (e) {
       if ("clientX" in e) {

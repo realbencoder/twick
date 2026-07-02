@@ -304,6 +304,9 @@ export const usePlayerManager = ({
     for (const track of tracks) {
       const element = track.getElementById(elementId);
       if (element) {
+        // Locked track — the canvas right-click Delete must not remove its clips (audit #2; this
+        // path bypasses deleteItem's guard, so it needs its own).
+        if ((track.getProps() as { locked?: boolean } | undefined)?.locked === true) return;
         editor.rippleRemoveElement(element as TrackElement);
         currentChangeLog.current = currentChangeLog.current + 1;
         setSelectedItem(null);
