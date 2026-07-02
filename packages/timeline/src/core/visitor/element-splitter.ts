@@ -137,6 +137,37 @@ export class ElementSplitter implements ElementVisitor<SplitResult> {
     if (originalTextArray.length < 2) {
       return { firstElement: null, secondElement: null, success: false };
     }
+    // Read word timings BEFORE choosing the split index — they drive the word partition below.
+    const originalProps = element.getProps() ?? {};
+    const originalMeta = element.getMetadata?.() ?? {};
+    const propsWordsMs = (originalProps as Record<string, unknown>).wordsMs;
+    const metaWordsMs = (originalMeta as Record<string, unknown>).wordsMs;
+
+    // Partition words by their ACTUAL spoken times when word-level timings exist. The old
+    // fraction-based index (floor(length * percentage)) assumes evenly-spaced words, so on real
+    // speech a word spoken BEFORE the split point could land in the SECOND caption (and vice
+    // versa) — the "split picks the wrong words" bug. wordsMs values are ABSOLUTE timeline
+    // times (ms; seconds in legacy projects — same unit detection as applyCutToCaption), so a
+    // word belongs to the first half iff it starts strictly before the split time.
+    const refWords: number[] | null =
+      Array.isArray(propsWordsMs) && propsWordsMs.length === originalTextArray.length
+        ? (propsWordsMs as number[])
+        : Array.isArray(metaWordsMs) && metaWordsMs.length === originalTextArray.length
+        ? (metaWordsMs as number[])
+        : null;
+
+    let timeBasedIndex: number | null = null;
+    if (refWords && refWords.length > 0) {
+      const maxVal = Math.max(...refWords);
+      const isSeconds = maxVal > 0 && maxVal < element.getEnd() * 2;
+      const splitInUnit = isSeconds ? this.splitTime : this.splitTime * 1000;
+      let count = 0;
+      for (const w of refWords) {
+        if (w < splitInUnit) count++;
+      }
+      timeBasedIndex = count;
+    }
+
     // Clamp so NEITHER half is empty. A cut inside the first word's time-fraction
     // would give index 0 (empty first half); inside the last word's fraction would
     // give index === length (empty second half). Keep both halves at >= 1 word.
@@ -144,7 +175,7 @@ export class ElementSplitter implements ElementVisitor<SplitResult> {
       1,
       Math.min(
         originalTextArray.length - 1,
-        Math.floor(originalTextArray.length * percentage)
+        timeBasedIndex ?? Math.floor(originalTextArray.length * percentage)
       )
     );
 
@@ -168,11 +199,9 @@ export class ElementSplitter implements ElementVisitor<SplitResult> {
     // the word timestamps that belong to its words. Without this, both
     // halves inherit the full original wordsMs, causing word count vs
     // array length mismatch and completely wrong subtitle timing.
-    const originalProps = element.getProps() ?? {};
-    const originalMeta = element.getMetadata?.() ?? {};
-    const propsWordsMs = (originalProps as Record<string, unknown>).wordsMs;
-    const metaWordsMs = (originalMeta as Record<string, unknown>).wordsMs;
-
+    // (Values are NOT shifted — wordsMs are absolute timeline times, and both
+    // halves keep their original window positions, so the sliced values remain
+    // correct for each half as-is. props/meta were read above the index calc.)
     if (Array.isArray(propsWordsMs) && propsWordsMs.length > 0) {
       const firstProps = firstElement.getProps() ?? {};
       (firstProps as Record<string, unknown>).wordsMs = propsWordsMs.slice(0, splitWordIndex);

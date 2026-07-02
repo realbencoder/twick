@@ -106,6 +106,17 @@ export const useCaptionsPanel = () => {
       if (index < elements.length) {
         const element = elements[index] as CaptionElement;
         element.setText(caption.t);
+        // Re-sync word-level timings to the NEW text. If the edit changed the word count,
+        // the stale wordsMs array desyncs word-by-word/karaoke highlighting (activeIdx is
+        // computed against the old word list). adjustCaptionWordsForTimeChange handles this:
+        // no wordsMs → no-op (manual captions untouched); same word count → no-op (equal
+        // start/end ⟹ zero delta); changed word count → letter-weighted regeneration across
+        // the caption's window. updateElement below is the single commit.
+        editor.adjustCaptionWordsForTimeChange(
+          element,
+          element.getStart(),
+          element.getEnd()
+        );
         editor.updateElement(element);
       }
     }

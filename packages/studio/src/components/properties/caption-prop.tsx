@@ -571,6 +571,15 @@ export function CaptionPropPanel({
             // Also include resolved font/colors from local state
             currentStyle.fontSize = fontSize;
             currentStyle.fontFamily = fontFamily;
+            // CRITICAL: renderers (editor subtitle-renderer + server render) read the NESTED
+            // font object (font.family / font.size / font.weight) — the flat fontSize/fontFamily
+            // keys above are ignored by them, so without this the "Apply to all" silently kept
+            // the track's OLD font. Preserve any existing weight; renderers default to 700.
+            currentStyle.font = {
+              ...(((trackProps as any)?.font as Record<string, unknown>) ?? {}),
+              family: fontFamily,
+              size: fontSize,
+            };
             currentStyle.colors = getEffectiveColors({
               nextColors: colors,
               highlightEnabled: useHighlight,
