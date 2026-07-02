@@ -106,21 +106,32 @@ export const useCaptionsPanel = () => {
       if (index < elements.length) {
         const element = elements[index] as CaptionElement;
         element.setText(caption.t);
-        // Re-sync word-level timings to the NEW text. If the edit changed the word count,
-        // the stale wordsMs array desyncs word-by-word/karaoke highlighting (activeIdx is
-        // computed against the old word list). adjustCaptionWordsForTimeChange handles this:
-        // no wordsMs → no-op (manual captions untouched); same word count → no-op (equal
-        // start/end ⟹ zero delta); changed word count → letter-weighted regeneration across
-        // the caption's window. updateElement below is the single commit.
-        editor.adjustCaptionWordsForTimeChange(
-          element,
-          element.getStart(),
-          element.getEnd()
-        );
         editor.updateElement(element);
       }
     }
     setCaptions(captions.map((sub, i) => (i === index ? caption : sub)));
+  };
+
+  // Re-sync word-level timings to the edited text — called on BLUR (end of the edit session),
+  // NOT per keystroke. Per-keystroke would destroy acoustic timings on transient states: deleting
+  // a word then retyping it (count 3→2→3) would hit the count-mismatch regen on the intermediate
+  // state, permanently replacing Deepgram-aligned times with synthetic letter-weighted ones even
+  // though the FINAL text has the same word count. On blur, only the final text matters:
+  // no wordsMs → no-op (manual captions untouched); same final count → no-op (equal window ⟹
+  // zero delta, acoustic timing preserved); changed count → letter-weighted regeneration.
+  // Without this, a word-count-changing edit leaves wordsMs stale and word-by-word/karaoke
+  // highlighting desyncs (activeIdx computed against the old word list).
+  const finalizeCaptionText = (index: number) => {
+    if (!captionsTrack.current) return;
+    const elements = captionsTrack.current.getElements();
+    if (index >= elements.length) return;
+    const element = elements[index] as CaptionElement;
+    editor.adjustCaptionWordsForTimeChange(
+      element,
+      element.getStart(),
+      element.getEnd()
+    );
+    editor.updateElement(element);
   };
 
   return {
@@ -129,5 +140,6 @@ export const useCaptionsPanel = () => {
     splitCaption,
     deleteCaption,
     updateCaption,
+    finalizeCaptionText,
   };
 };

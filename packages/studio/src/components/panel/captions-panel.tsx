@@ -52,12 +52,15 @@ export function CaptionsPanel({
   splitCaption,
   deleteCaption,
   updateCaption,
+  finalizeCaptionText,
 }: {
   captions: CaptionPanelEntry[];
   addCaption: () => void;
   splitCaption: (index: number) => void | Promise<void>;
   deleteCaption: (index: number) => void;
   updateCaption: (index: number, caption: CaptionPanelEntry) => void;
+  /** Re-syncs word-level timings to the final text — fired on blur (end of edit), not per keystroke. */
+  finalizeCaptionText?: (index: number) => void;
 }) {
   return (
     <div className="panel-container captions-panel">
@@ -125,6 +128,7 @@ export function CaptionsPanel({
                     onChange={(e) =>
                       updateCaption(i, { ...caption, t: e.target.value })
                     }
+                    onBlur={() => finalizeCaptionText?.(i)}
                     className="input-dark captions-panel-textarea"
                   />
                   <div className="captions-panel-actions">

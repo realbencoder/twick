@@ -586,13 +586,26 @@ export function CaptionPropPanel({
               outlineEnabled: useOutline,
             });
             currentStyle.capStyle = capStyle.value;
-            // Reset all captions to use track defaults (friend = no per-element undo snapshot)
+            // Reset all captions to use track defaults (friend = no per-element undo snapshot).
+            // CRITICAL: also CLEAR per-element style overrides (same keysToClear set as
+            // handleUseTrackDefaultsChange). The server render's parser gives ELEMENT props
+            // precedence over track props (opposite of the editor renderer's track-first read),
+            // so a stale per-element font/colors/capStyle left behind here would make the final
+            // render disagree with the editor preview for any previously-customized caption.
+            const applyAllKeysToClear = [
+              "capStyle", "x", "y", "width", "maxWidth", "textAlign", "rotation",
+              "opacity", "colors", "font", "lineWidth", "rectProps",
+              "shadowColor", "shadowBlur", "shadowOffset", "fill", "stroke",
+            ];
             const allCaptions = track.getElements();
             const friend = track.createFriend();
             allCaptions.forEach((el: any) => {
               if (el instanceof CaptionElement) {
-                const p = el.getProps() ?? {};
-                el.setProps({ ...(p as any), useTrackDefaults: true });
+                const p: Record<string, unknown> = { ...((el.getProps() ?? {}) as any), useTrackDefaults: true };
+                for (const k of applyAllKeysToClear) {
+                  delete p[k];
+                }
+                el.setProps(p);
                 friend.updateElement(el);
               }
             });
