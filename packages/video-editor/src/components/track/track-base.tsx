@@ -3,6 +3,7 @@ import { Track, TrackElement } from "@twick/timeline";
 import "../../styles/timeline.css";
 import TrackElementView from "./track-element";
 import { ElementColors } from "../../helpers/types";
+import { isMainVideoTrack } from "../../helpers/editor.utils";
 import type { TrackElementDragPayload } from "./track-element";
 import type { DropPointer } from "./track-element";
 
@@ -20,6 +21,8 @@ interface TrackBaseProps {
   elementColors?: ElementColors;
   /** Stable callback returning timeline snap-target times (see TrackElementView). Optional. */
   getSnapTargets?: (excludeElementId: string) => number[];
+  /** Reorder lift/settle notifications, threaded to each TrackElementView (visuals in timeline-view). */
+  onReorderStateChange?: (active: boolean, element?: TrackElement, thumbUrl?: string | null) => void;
 }
 
 // Memoized: clips/tracks are logically INDEPENDENT of the playhead tick (nothing here reads
@@ -39,6 +42,7 @@ const TrackBase = memo(({
   onDragStateChange,
   elementColors,
   getSnapTargets,
+  onReorderStateChange,
 }: TrackBaseProps) => {
   const trackRef = useRef<HTMLDivElement>(null);
 
@@ -67,7 +71,9 @@ const TrackBase = memo(({
           onDragStateChange={onDragStateChange}
           elementColors={elementColors}
           getSnapTargets={getSnapTargets}
-          isMainVideoTrack={track.getName?.() === "Video"}
+          isMainVideoTrack={isMainVideoTrack(track)}
+          mainTrackElementCount={isMainVideoTrack(track) ? (elements?.length ?? 0) : 0}
+          onReorderStateChange={onReorderStateChange}
           locked={(track.getProps() as { locked?: boolean } | undefined)?.locked === true}
           nextStart={
             index < elements.length - 1

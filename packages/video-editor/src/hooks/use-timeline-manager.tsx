@@ -1,4 +1,5 @@
 import { useLivePlayerContext } from "@twick/live-player";
+import { isMainVideoTrack } from "../helpers/editor.utils";
 import {
   TrackElement,
   Track,
@@ -29,6 +30,11 @@ interface TimelineManagerReturn {
     updates: { start: number; end: number };
   }) => void;
   onElementDrop: (params: ElementDropParams) => Promise<void>;
+  /** Commit a main-track drag-to-reorder at a non-identity insertion slot (see timeline-view). */
+  onMainReorder: (
+    payload: { element: TrackElement; dragType: string; updates: { start: number; end: number } },
+    toSlot: number
+  ) => void;
   onReorder: (reorderedItems: Track[]) => void;
   onSeek: (time: number) => void;
   onSelectionChange: (selectedItem: TrackElement | Track | null) => void;
@@ -96,7 +102,7 @@ export const useTimelineManager = (): TimelineManagerReturn => {
         // recording, leaves a main-track gap the gate can't see, and a LATER unrelated drag
         // closes it with a surprise caption ripple (adversarial-review finding #2).
         const isMainTrackEl = (el: TrackElement) =>
-          (editor.getTrackById(el.getTrackId()) as any)?.getName?.() === "Video";
+          isMainVideoTrack(editor.getTrackById(el.getTrackId()));
         const movable = elements.filter((el) => !isMainTrackEl(el));
         if (movable.length === 0) {
           setSelectedItem(element);
@@ -217,13 +223,59 @@ export const useTimelineManager = (): TimelineManagerReturn => {
   const closeMainTrackGapsIfNeeded = (element: TrackElement) => {
     try {
       const track = editor.getTrackById(element.getTrackId());
-      if (!track || (track as any).getName?.() !== "Video") return;
+      if (!isMainVideoTrack(track)) return;
       const close = (editor as any).closeVideoTrackGaps;
       if (typeof close === "function") {
         Promise.resolve(close.call(editor)).catch(() => {});
       }
     } catch {
       /* non-fatal — magnetic close is an enhancement, never break the drag commit */
+    }
+  };
+
+  /**
+   * Commit a main-track drag-to-reorder. The view has already guaranteed: reorder was ACTIVATED
+   * (8px/long-press gates), not cancelled (Esc/pointercancel/blur), and `toSlot` is a
+   * NON-IDENTITY slot recomputed from the drop pointer. One engine op = one undo entry = one
+   * autosave; the engine re-checks identity/bounds as a belt (returns moved:false, no commit).
+   * Contiguity is true by construction — closeMainTrackGapsIfNeeded is NOT called here.
+   */
+  const onMainReorder = (
+    payload: { element: TrackElement; dragType: string; updates: { start: number; end: number } },
+    toSlot: number
+  ) => {
+    try {
+      const reorder = (editor as unknown as {
+        reorderMainTrackElement?: (id: string, slot: number) => { moved: boolean; overlaysPinnedCount: number };
+      }).reorderMainTrackElement;
+      if (typeof reorder !== "function") return; // duck-typed — older dist without the op = no-op
+      const commit = () => {
+        const result = reorder.call(editor, payload.element.getId(), toSlot);
+        if (result?.moved) {
+          setSelectedItem(payload.element);
+          editor.refresh();
+          if (result.overlaysPinnedCount > 0) {
+            // One-time "overlays and B-roll stay where they are" toast — the app listens.
+            try {
+              window.dispatchEvent(new CustomEvent("twick-reorder-overlays-pinned"));
+            } catch {
+              /* non-fatal */
+            }
+          }
+        }
+      };
+      // If playback restarted mid-drag (space bar), settle the pool before permuting s/e.
+      const ctrl = (window as unknown as {
+        __webcodecs_controller?: { isPlaying?: () => boolean; pause?: () => void };
+      }).__webcodecs_controller;
+      if (ctrl?.isPlaying?.()) {
+        ctrl.pause?.();
+        requestAnimationFrame(commit);
+      } else {
+        commit();
+      }
+    } catch {
+      /* non-fatal — a failed reorder leaves the timeline exactly as it was (pin never moved) */
     }
   };
 
@@ -379,6 +431,7 @@ export const useTimelineManager = (): TimelineManagerReturn => {
     onAddTrack,
     onElementDrag,
     onElementDrop,
+    onMainReorder,
     onReorder,
     onSeek,
     onSelectionChange,

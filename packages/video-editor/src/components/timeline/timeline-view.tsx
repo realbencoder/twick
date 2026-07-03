@@ -13,6 +13,8 @@ import { MarqueeOverlay } from "./marquee-overlay";
 import { getTrackOrSeparatorAt, type DropTarget } from "../../utils/drop-target";
 import { useTimeScale, createTimeScale, LABEL_WIDTH, SEPARATOR_HEIGHT } from "../../helpers/time-scale";
 import { getSnapTargets as computeSnapTargets } from "../../helpers/snap-targets";
+import { isMainVideoTrack } from "../../helpers/editor.utils";
+import { DRAG_TYPE } from "../../helpers/constants";
 import type { Size } from "@twick/timeline";
 import type { ChapterMarker } from "@twick/timeline";
 import type { TrackElementDragPayload } from "../track/track-element";
@@ -34,6 +36,7 @@ function TimelineView({
   onMarqueeSelect,
   onElementDrag,
   onElementDrop,
+  onMainReorder,
   onSeek,
   elementColors,
   selectedIds,
@@ -63,6 +66,12 @@ function TimelineView({
     updates: { start: number; end: number };
     dropTarget: DropTarget | null;
   }) => Promise<void>;
+  /**
+   * Commit a main-track clip reorder (drag-to-reorder). `toSlot` is the insertion slot in
+   * PRE-removal indexing (0..N), recomputed from the DROP pointer — never last-hover state.
+   * The view guarantees this is only called for an ACTIVATED, non-cancelled, non-identity drop.
+   */
+  onMainReorder?: (payload: TrackElementDragPayload, toSlot: number) => void;
   onSeek: (time: number) => void;
   onItemSelect: (item: Track | TrackElement, event: React.MouseEvent) => void;
   onEmptyClick: () => void;
@@ -99,6 +108,114 @@ function TimelineView({
   const [draggingElementId, setDraggingElementId] = useState<string | null>(null);
   const [activeDropTarget, setActiveDropTarget] = useState<DropTarget | null>(null);
 
+  // ── Drag-to-reorder (main track): the lifted clip stays PINNED in its slot (rendered truth);
+  // the view owns all reorder visuals — a pointer-anchored thumbnail ghost + an orange insertion
+  // caret. State for render, ref-mirror for callbacks (memo/useCallback house rule).
+  const [reorderState, setReorderState] = useState<{
+    element: TrackElement;
+    thumbUrl: string | null;
+    ghostW: number;
+  } | null>(null);
+  const reorderStateRef = useRef<typeof reorderState>(null);
+  const reorderCancelledRef = useRef(false);
+  // Caret: slot index + precomputed content-X of its boundary (null = hidden, incl. identity slots).
+  const [caret, setCaret] = useState<{ slot: number; x: number } | null>(null);
+  const caretRef = useRef<typeof caret>(null);
+  const ghostRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Slot math (pointer-based, not ghost-edge-based): map clientX → content time, then to an
+   * insertion slot between sorted main-track clips (midpoint rule). Returns null when the pointer
+   * resolves to an identity slot (dropping there changes nothing — caret hidden, drop no-ops).
+   */
+  const computeReorderSlot = (clientX: number, draggedId: string): { slot: number; x: number } | null => {
+    const rect = timelineContentRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const main = (tracks || []).find((t) => isMainVideoTrack(t));
+    if (!main) return null;
+    const els = [...main.getElements()].sort((a, b) => a.getStart() - b.getStart());
+    const N = els.length;
+    if (N < 2) return null;
+    const i = els.findIndex((el) => el.getId() === draggedId);
+    if (i === -1) return null;
+    const scale = createTimeScale(zoomLevel, duration);
+    const t = scale.contentXToTime(clientX - rect.left);
+    let slot: number;
+    const lastEnd = els[N - 1].getEnd();
+    if (t <= 0) slot = 0;
+    else if (t >= lastEnd) slot = N;
+    else {
+      slot = N;
+      for (let j = 0; j < N; j++) {
+        const sj = els[j].getStart();
+        const ej = els[j].getEnd();
+        if (t < ej) {
+          slot = t < (sj + ej) / 2 ? j : j + 1;
+          break;
+        }
+      }
+    }
+    if (slot === i || slot === i + 1) return null; // identity — hidden caret, no-op drop
+    const boundaryTime = slot === 0 ? 0 : els[slot - 1].getEnd();
+    return { slot, x: scale.timeToContentX(boundaryTime) };
+  };
+
+  const clearReorderVisuals = () => {
+    setReorderState(null);
+    reorderStateRef.current = null;
+    setCaret(null);
+    caretRef.current = null;
+  };
+
+  // Lift/settle notifications from the dragged TrackElementView (threaded through TrackBase).
+  const handleReorderStateChange = useCallback(
+    (active: boolean, element?: TrackElement, thumbUrl?: string | null) => {
+      if (active && element) {
+        reorderCancelledRef.current = false;
+        const scale = createTimeScale(zoomLevel, duration);
+        const ghostW = Math.max(
+          40,
+          Math.min(160, (element.getEnd() - element.getStart()) * scale.pxPerSec)
+        );
+        const next = { element, thumbUrl: thumbUrl ?? null, ghostW };
+        setReorderState(next);
+        reorderStateRef.current = next;
+      } else {
+        setReorderState(null);
+        reorderStateRef.current = null;
+        setCaret(null);
+        caretRef.current = null;
+      }
+    },
+    // zoomLevel/duration only affect ghost width at LIFT time — safe to refresh identity on them.
+    [zoomLevel, duration]
+  );
+
+  // Cancel matrix: Escape / pointercancel / touchcancel / window blur → zero mutation, zero
+  // history entry. The eventual sendUpdate (if any) hits the routing guard and no-ops; the clip
+  // never moved (MOVE-pin), so there is nothing to restore.
+  useEffect(() => {
+    if (!reorderState) return;
+    const cancel = () => {
+      reorderCancelledRef.current = true;
+      clearReorderVisuals();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") cancel();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointercancel", cancel);
+    document.addEventListener("touchcancel", cancel);
+    window.addEventListener("blur", cancel);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointercancel", cancel);
+      document.removeEventListener("touchcancel", cancel);
+      window.removeEventListener("blur", cancel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reorderState]);
+
   const { selectedTrackElement } = useMemo(() => {
     if (selectedItem && "elements" in selectedItem) {
       return { selectedTrackElement: null };
@@ -108,6 +225,28 @@ function TimelineView({
 
   const handleDragWithDrop = useCallback(
     (payload: TrackElementDragPayload, dropPointer?: { clientX: number; clientY: number }) => {
+      // ── EXCLUSIVE main-track MOVE routing (drag-to-reorder). Goes FIRST, before every
+      // fallthrough to onElementDrag/onElementDrop: a main-clip MOVE release must never reach
+      // updateElements (whose ElementUpdater sets changed=true with no value diff → a spurious
+      // history entry per pinned release) or the cross-track drop path. Non-activated jiggles
+      // and cancelled gestures clean up and return with ZERO mutation.
+      {
+        const elTrack = (tracks || []).find((t) => t.getId() === payload.element.getTrackId());
+        if (payload.dragType === DRAG_TYPE.MOVE && isMainVideoTrack(elTrack)) {
+          const active = !!reorderStateRef.current && !reorderCancelledRef.current;
+          // Recompute the slot from the DROP pointer (never trust last-hover state — pointer-up
+          // ordering differs across mouse/touch). Identity slots return null → no-op.
+          const dropSlot =
+            active && dropPointer
+              ? computeReorderSlot(dropPointer.clientX, payload.element.getId())
+              : null;
+          clearReorderVisuals();
+          if (active && dropSlot && onMainReorder) {
+            onMainReorder(payload, dropSlot.slot);
+          }
+          return;
+        }
+      }
       // No drop pointer or no drop handler – treat as a simple drag (update s/e on same track).
       if (!dropPointer || !onElementDrop) {
         onElementDrag(payload);
@@ -139,7 +278,8 @@ function TimelineView({
       // cross-track behavior stays as implemented.
       onElementDrop({ ...payload, dropTarget });
     },
-    [onElementDrag, onElementDrop, tracks]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [onElementDrag, onElementDrop, onMainReorder, tracks, zoomLevel, duration]
   );
 
   useEdgeAutoScroll({
@@ -158,6 +298,23 @@ function TimelineView({
         const rect = timelineContentRef.current?.getBoundingClientRect();
         if (rect) {
           setActiveDropTarget(getTrackOrSeparatorAt(pt.clientY, rect.top, TRACK_HEIGHT));
+        }
+        // Reorder visuals: ghost follows the pointer by DIRECT DOM mutation (zero React state
+        // per pixel); caret slot is state but only SET when the computed slot changes.
+        const rs = reorderStateRef.current;
+        if (rs && !reorderCancelledRef.current && rect) {
+          if (ghostRef.current) {
+            const isTouch = "touches" in e;
+            const gx = pt.clientX - rect.left - rs.ghostW / 2;
+            const gy = pt.clientY - rect.top - (isTouch ? TRACK_HEIGHT + 24 : TRACK_HEIGHT / 2);
+            ghostRef.current.style.transform = `translate(${gx}px, ${gy}px)`;
+          }
+          const next = computeReorderSlot(pt.clientX, rs.element.getId());
+          const prev = caretRef.current;
+          if ((next?.slot ?? null) !== (prev?.slot ?? null)) {
+            caretRef.current = next;
+            setCaret(next);
+          }
         }
       }
     };
@@ -439,6 +596,64 @@ function TimelineView({
         onDrop={handleDrop}
       >
         <MarqueeOverlay marquee={marquee} />
+        {/* Drag-to-reorder ghost: pointer-anchored clip thumbnail, DOM-positioned (see onMove). */}
+        {reorderState && (
+          <div
+            ref={ghostRef}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: reorderState.ghostW,
+              height: TRACK_HEIGHT,
+              pointerEvents: "none",
+              zIndex: 60,
+              opacity: 0.75,
+              borderRadius: 6,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+              background: reorderState.thumbUrl
+                ? `url(${reorderState.thumbUrl}) center/cover no-repeat`
+                : "rgba(249,115,22,0.35)",
+              border: "1px solid rgba(249,115,22,0.8)",
+              transform: "translate(-9999px, 0)",
+            }}
+          />
+        )}
+        {/* Insertion caret: full-height orange bar + triangle cap over the main-track row. Only
+            rendered for non-identity slots — a visible caret always means "this drop changes
+            something". */}
+        {caret != null && (() => {
+          const mainIdx = (tracks || []).findIndex((t) => isMainVideoTrack(t));
+          if (mainIdx < 0) return null;
+          const top = SEPARATOR_HEIGHT + mainIdx * timeScale.trackStride;
+          return (
+            <div
+              style={{
+                position: "absolute",
+                left: caret.x - 1,
+                top,
+                width: 2,
+                height: TRACK_HEIGHT,
+                background: "#f97316",
+                zIndex: 55,
+                pointerEvents: "none",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  top: -5,
+                  left: -4,
+                  width: 0,
+                  height: 0,
+                  borderLeft: "5px solid transparent",
+                  borderRight: "5px solid transparent",
+                  borderTop: "6px solid #f97316",
+                }}
+              />
+            </div>
+          );
+        })()}
         {preview && (
           <div
             className="twick-drop-preview"
@@ -487,6 +702,7 @@ function TimelineView({
                   onItemSelection={handleItemSelection}
                   onDrag={handleDragWithDrop}
                   onDragStateChange={handleDragStateChange}
+                  onReorderStateChange={handleReorderStateChange}
                   elementColors={elementColors}
                   getSnapTargets={getSnapTargets}
                 />

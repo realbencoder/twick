@@ -277,3 +277,11 @@
   border-radius: 6px;
   transition: left 0.05s ease-out, top 0.05s ease-out;
 }
+
+/* Drag-to-reorder lift: the clip stays pinned in its slot (the ghost is the moving affordance);
+   dim + slight shrink signals "lifted" without ever showing a layout gap. */
+.twick-track-element-reordering {
+  opacity: 0.6;
+  transform: scale(0.97);
+  z-index: 50;
+}

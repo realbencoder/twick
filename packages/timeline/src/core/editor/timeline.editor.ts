@@ -1292,7 +1292,7 @@ export class TimelineEditor {
             "seg",
             segIdx,
             "→ newStart",
-            (ps + d).toFixed(3),
+            ns.toFixed(3),
             "δ",
             d.toFixed(3)
           );

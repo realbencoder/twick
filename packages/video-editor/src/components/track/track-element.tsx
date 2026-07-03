@@ -70,6 +70,10 @@ interface TrackElementViewProps {
    * binds here; delete/split are gated in use-timeline-manager.
    */
   locked?: boolean;
+  /** Element count on the magnetic main track — reorder never activates with < 2 clips. */
+  mainTrackElementCount?: number;
+  /** Reorder lift/settle notifications (ghost + caret visuals live in timeline-view). */
+  onReorderStateChange?: (active: boolean, element?: TrackElement, thumbUrl?: string | null) => void;
 }
 
 // Memoized (see track-base): a clip is independent of the playhead tick, so with stable props from
@@ -92,6 +96,8 @@ export const TrackElementView = memo(({
   getSnapTargets,
   isMainVideoTrack = false,
   locked = false,
+  mainTrackElementCount,
+  onReorderStateChange,
 }: TrackElementViewProps) => {
   const ref = useRef<HTMLDivElement>(null);
   const dragType = useRef<string | null>(null);
@@ -102,6 +108,47 @@ export const TrackElementView = memo(({
     const s = (element as any).getProps?.()?.src;
     return s && THUMB_CACHE.has(s) ? THUMB_CACHE.get(s)! : null;
   });
+
+  // ── Drag-to-reorder (main track) activation state. The MOVE-pin stays the rendered truth;
+  // reorder only LIFTS a ghost (timeline-view owns all visuals). Mouse: >8px cumulative |dx|.
+  // Touch: 250ms long-press with <8px movement (movement first = today's pin drag — protects
+  // tap-select and scroll intent).
+  const [isReordering, setIsReordering] = useState(false);
+  const reorderActiveRef = useRef(false);
+  const accumDxRef = useRef(0);
+  const touchDragRef = useRef(false);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const canActivateReorder = () =>
+    !!isMainVideoTrack &&
+    !locked &&
+    element.getType() === "video" &&
+    selectedIds.size <= 1 &&
+    (mainTrackElementCount ?? 0) >= 2;
+
+  const activateReorder = () => {
+    if (reorderActiveRef.current) return;
+    reorderActiveRef.current = true;
+    // Settle playback before any permutation math — established vendored pattern (transport buttons).
+    (window as unknown as { __webcodecs_controller?: { pause?: () => void } })
+      .__webcodecs_controller?.pause?.();
+    setIsReordering(true);
+    onReorderStateChange?.(true, element, thumbUrl);
+  };
+
+  const settleReorder = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    accumDxRef.current = 0;
+    touchDragRef.current = false;
+    if (reorderActiveRef.current) {
+      reorderActiveRef.current = false;
+      setIsReordering(false);
+      onReorderStateChange?.(false, element);
+    }
+  };
 
   // Extract a single thumbnail frame for video/image elements
   useEffect(() => {
@@ -252,6 +299,21 @@ export const TrackElementView = memo(({
       onDragStateChange?.(true, element);
     }
     dragType.current = DRAG_TYPE.MOVE;
+    if (isMainVideoTrack) {
+      accumDxRef.current += Math.abs(dx);
+      if (accumDxRef.current > 8) {
+        if (touchDragRef.current) {
+          // Touch moved past the dead zone before the long-press fired → the user is
+          // pin-dragging or scrolling, not reordering. Cancel the pending lift.
+          if (longPressTimerRef.current) {
+            clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+          }
+        } else if (!reorderActiveRef.current && canActivateReorder()) {
+          activateReorder();
+        }
+      }
+    }
     // Read snap targets ONCE per move, OUTSIDE the state updater (updater stays pure).
     const snapTargets = getSnapTargets?.(element.getId()) ?? [];
     setPosition((prev) => {
@@ -405,6 +467,9 @@ export const TrackElementView = memo(({
     if (didChange || dropPointer) {
       onDrag(payload, dropPointer);
     }
+    // AFTER onDrag: the view's routing guard + onMainReorder run synchronously inside it and
+    // need the view-side reorder state alive; settle only once the drop has been consumed.
+    settleReorder();
   };
 
   const getElementColor = (elementType: string) => {
@@ -437,6 +502,20 @@ export const TrackElementView = memo(({
     return ELEMENT_COLORS.element;
   };
 
+  // Window blur mid-gesture: no mouseup/touchend will arrive — reset local drag + reorder state
+  // (the view cancels its own visuals on blur; nothing to restore since the pin never moved).
+  useEffect(() => {
+    if (!isDragging) return;
+    const onBlur = () => {
+      setIsDragging(false);
+      onDragStateChange?.(false, element);
+      settleReorder();
+    };
+    window.addEventListener("blur", onBlur);
+    return () => window.removeEventListener("blur", onBlur);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDragging]);
+
   const isSelected = useMemo(() => {
     return selectedIds.has(element.getId());
   }, [selectedIds, element]);
@@ -450,7 +529,7 @@ export const TrackElementView = memo(({
       isSelected
         ? "twick-track-element-selected"
         : "twick-track-element-default"
-    } ${isDragging ? "twick-track-element-dragging" : ""} ${locked ? "twick-track-element-locked" : ""}`,
+    } ${isDragging ? "twick-track-element-dragging" : ""} ${isReordering ? "twick-track-element-reordering" : ""} ${locked ? "twick-track-element-locked" : ""}`,
     onMouseDown: (e) => {
       if (e.target === ref.current) {
         setLastPos();
@@ -459,6 +538,15 @@ export const TrackElementView = memo(({
     onTouchStart: (e) => {
       if (e.target === ref.current) {
         setLastPos();
+      }
+      if (canActivateReorder()) {
+        touchDragRef.current = true;
+        accumDxRef.current = 0;
+        if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = setTimeout(() => {
+          longPressTimerRef.current = null;
+          if (accumDxRef.current < 8 && canActivateReorder()) activateReorder();
+        }, 250);
       }
     },
     onMouseUp: (e) => sendUpdate(e),
