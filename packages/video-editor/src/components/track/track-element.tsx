@@ -17,6 +17,7 @@ import {
 } from "@twick/timeline";
 import { ElementColors } from "../../helpers/types";
 import { drawClipWaveform, getTimelineWaveform } from "../../helpers/waveform-render";
+import { drawClipFilmstrip, getFilmstripMeta } from "../../helpers/filmstrip-render";
 import "../../styles/timeline.css";
 
 // Thumbnail cache keyed by SOURCE (not element id) so split-clone siblings sharing a src reuse one
@@ -277,6 +278,45 @@ export const TrackElementView = memo(({
     window.addEventListener("twick-waveform-ready", onReady);
     return () => window.removeEventListener("twick-waveform-ready", onReady);
   }, [showWaveform, element.getId(), position.start, position.end, wfSrcTime, wfRate, wfVolume, parentWidth, duration]);
+
+  // Timeline FILMSTRIP: a row of frames across each main-video clip (from the scrub storyboard the
+  // app registers on window.__twick_filmstrip). Draw-only sprite blits — never toDataURL'd, so
+  // unlike the single-frame thumbnail extractor this can't taint or fail on a CORS-less response.
+  // Same source-offset handling as the waveform (wfSrcTime/wfRate), so a split/trimmed/reordered
+  // clip shows ITS content. Falls back to nothing (the single-frame background shows) when the
+  // video has no storyboard. 'twick-filmstrip-ready' triggers the first paint if it registers late.
+  const filmstripCanvasRef = useRef<HTMLCanvasElement>(null);
+  const showFilmstrip = isMainVideoTrack && element.getType() === "video";
+  useEffect(() => {
+    if (!showFilmstrip) return;
+    const canvas = filmstripCanvasRef.current;
+    if (!canvas) return;
+    let cancelled = false;
+    const draw = () => {
+      if (cancelled) return false;
+      const meta = getFilmstripMeta();
+      if (!meta) return false;
+      const widthPx = canvas.clientWidth;
+      const heightPx = canvas.clientHeight;
+      if (widthPx <= 0 || heightPx <= 0) return false;
+      const span = Math.max(0, position.end - position.start);
+      const dpr = Math.min(2, (typeof window !== "undefined" && window.devicePixelRatio) || 1);
+      drawClipFilmstrip(
+        canvas,
+        meta,
+        { sourceStart: wfSrcTime, span, playbackRate: wfRate, widthPx, heightPx, dpr },
+        () => { if (!cancelled) draw(); } // a sheet finished decoding → redraw with it
+      );
+      return true;
+    };
+    if (draw()) return () => { cancelled = true; };
+    const onReady = () => { draw(); };
+    window.addEventListener("twick-filmstrip-ready", onReady);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("twick-filmstrip-ready", onReady);
+    };
+  }, [showFilmstrip, element.getId(), position.start, position.end, wfSrcTime, wfRate, parentWidth, duration]);
 
   // Snaps a candidate edge time (seconds) to the nearest timeline target within SNAP_THRESHOLD_PX,
   // measured in the CURRENT zoom (pixelsPerSecond = parentWidth / duration). Returns the input
@@ -597,6 +637,23 @@ export const TrackElementView = memo(({
   return (
     <motion.div {...motionProps}>
       <div style={{ touchAction: "none", height: "100%" }} {...bind()}>
+        {/* Filmstrip fills the clip BEHIND the waveform (rendered first → lower paint order).
+            Transparent where a sheet is still loading, so the single-frame background shows through
+            until frames arrive — a graceful progressive load, never a black gap. */}
+        {showFilmstrip ? (
+          <canvas
+            ref={filmstripCanvasRef}
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              pointerEvents: "none",
+              zIndex: 0,
+              opacity: 0.9,
+            }}
+          />
+        ) : null}
         {showWaveform ? (
           <canvas
             ref={waveformCanvasRef}
@@ -607,7 +664,7 @@ export const TrackElementView = memo(({
               width: "100%",
               height: "46%",
               pointerEvents: "none",
-              zIndex: 0,
+              zIndex: 1,
             }}
           />
         ) : null}

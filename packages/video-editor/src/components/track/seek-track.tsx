@@ -94,48 +94,28 @@ export default function SeekTrack({
       };
     }
 
-    // Default tick configuration
-    let major = 1;
-    let minors = 5;
-
-    if (duration < 10) {
-      major = 1; // 1s major ticks
-      minors = 10; // 0.1s minor ticks
-    } else if (duration < 30) {
-      major = 5; // 5s major ticks
-      minors = 5; // 1s minor ticks
-    } else if (duration < 120) {
-      major = 10; // 10s major ticks
-      minors = 5; // 2s minor ticks
-    } else if (duration < 300) {
-      // < 5 min
-      major = 30; // 30s major ticks
-      minors = 6; // 5s minor ticks
-    } else if (duration < 900) {
-      // < 15 min
-      major = 60; // 1m major ticks
-      minors = 6; // 10s minor ticks
-    } else if (duration < 1800) {
-      // < 30 min
-      major = 120; // 2m major ticks
-      minors = 4; // 30s minor ticks
-    } else if (duration < 3600) {
-      // < 1 hr
-      major = 300; // 5m major ticks
-      minors = 5; // 1m minor ticks
-    } else if (duration < 7200) {
-      // < 2 hr
-      major = 600; // 10m major ticks
-      minors = 10; // 1m minor ticks
-    } else {
-      major = 1800; // 30m major ticks
-      minors = 6; // 5m minor ticks
+    // ZOOM-AWARE default: choose the major interval from actual pixels-per-second so labels sit a
+    // comfortable ~96px apart at ANY zoom — instead of coarse duration buckets that left a 10.0s
+    // clip showing only "5s"/"10s" (the old `duration < 10` bucket was exclusive, so an exactly-10s
+    // video fell through to the 5s-major tier). Each nice interval carries a sensible minor count.
+    const pxPerSec = (ts as unknown as { pxPerSec?: number }).pxPerSec || 1;
+    const TARGET_LABEL_PX = 96;
+    const idealSec = TARGET_LABEL_PX / pxPerSec;
+    // [majorSeconds, minorSubdivisions] — minors chosen so a minor tick never falls below ~10px.
+    const NICE: Array<[number, number]> = [
+      [0.1, 2], [0.25, 5], [0.5, 5], [1, 4], [2, 4], [5, 5], [10, 5],
+      [15, 3], [30, 6], [60, 4], [120, 4], [300, 5], [600, 5], [900, 3], [1800, 6], [3600, 6],
+    ];
+    let chosen = NICE[NICE.length - 1];
+    for (const cfg of NICE) {
+      if (cfg[0] >= idealSec) { chosen = cfg; break; }
     }
+    const [major, minorSub] = chosen;
     return {
       majorIntervalSec: major,
-      minorIntervalSec: minors > 0 ? major / (minors + 1) : major,
+      minorIntervalSec: minorSub > 0 ? major / minorSub : major,
     };
-  }, [duration, timelineTickConfigs]);
+  }, [duration, timelineTickConfigs, ts]);
 
   // Container width not needed; tick rendering uses CSS backgrounds sized by totalWidth
 
@@ -250,55 +230,73 @@ export default function SeekTrack({
     const labels: React.ReactElement[] = [];
     const epsilon = 1e-6;
 
-    // Generate all tick positions
-    const tickPositions = new Set<number>();
+    // mm:ss once the scale is a minute or coarser (or the video itself is >= 1 min); sub-second
+    // precision when the major interval is finer than 1s; whole seconds otherwise.
+    const fmtLabel = (t: number): string => {
+      if (majorIntervalSec >= 60 || duration >= 60) {
+        const total = Math.round(t);
+        const m = Math.floor(total / 60);
+        const s = total % 60;
+        return `${m}:${s.toString().padStart(2, "0")}`;
+      }
+      if (majorIntervalSec < 1) return `${t.toFixed(1)}s`;
+      return `${Math.round(t)}s`;
+    };
 
-    // Add minor ticks
-    for (let t = 0; t <= duration + epsilon; t += minorIntervalSec) {
-      tickPositions.add(Math.round(t * 1000) / 1000); // Round to avoid floating point issues
-    }
+    // Number of minor ticks per major (integer, guards float drift in the isMajor test below).
+    const minorsPerMajor = Math.max(1, Math.round(majorIntervalSec / minorIntervalSec));
 
-    // Draw ticks
-    tickPositions.forEach((t) => {
+    // Build minor-tick positions by INDEX (i * minor) so "is this a major tick" is an exact integer
+    // test (i % minorsPerMajor === 0) — the old (t/major) rounding test drifted at fine intervals.
+    const totalMinors = Math.floor((duration + epsilon) / minorIntervalSec);
+    for (let i = 0; i <= totalMinors; i++) {
+      const t = i * minorIntervalSec;
       const left = ts.timeToPx(t);
-      const isMajor = Math.abs((t / majorIntervalSec) - Math.round(t / majorIntervalSec)) < 0.001;
+      const isMajor = i % minorsPerMajor === 0;
 
       ticks.push(
         <div
-          key={`tick-${t}`}
+          key={`tick-${i}`}
           style={{
             position: "absolute",
             left,
             top: 0,
             width: "1px",
-            height: isMajor ? "12px" : "8px",
-            backgroundColor: isMajor ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.2)",
+            height: isMajor ? "13px" : "7px",
+            // Minors are now clearly visible (was 0.2 — read as empty between the two big numbers).
+            backgroundColor: isMajor ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.32)",
             pointerEvents: "none",
           }}
         />
       );
 
-      // Add labels only for major ticks
       if (isMajor && t > epsilon) {
+        // Anchor so the first/last labels never clip: left-align near 0, right-align near the end,
+        // center in the middle. (The old center-anchored end label hung half-off into overflow:hidden.)
+        const nearEnd = left >= totalWidth - 22;
+        const anchor = nearEnd ? "translateX(-100%)" : "translateX(-50%)";
+        const leftPx = nearEnd ? Math.min(left, totalWidth - 2) : left;
         labels.push(
           <div
-            key={`lbl-${t}`}
+            key={`lbl-${i}`}
             style={{
               position: "absolute",
-              left,
+              left: leftPx,
               bottom: "6px",
-              transform: "translateX(-50%)",
-              color: "rgba(255,255,255,0.7)",
-              font: "bold 10px system-ui, sans-serif",
+              transform: anchor,
+              color: "rgba(255,255,255,0.72)",
+              font: "600 10px system-ui, sans-serif",
+              fontVariantNumeric: "tabular-nums",
+              whiteSpace: "nowrap",
               pointerEvents: "none",
-              textShadow: "1px 1px 2px rgba(0,0,0,0.8)",
+              textShadow: "0 1px 2px rgba(0,0,0,0.85)",
             }}
           >
-            {`${Math.floor(t)}s`}
+            {fmtLabel(t)}
           </div>
         );
       }
-    });
+    }
 
     return (
       <div
