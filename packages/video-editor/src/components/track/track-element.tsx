@@ -539,13 +539,25 @@ export const TrackElementView = memo(({
       if (e.target === ref.current) {
         setLastPos();
       }
-      if (canActivateReorder()) {
+      // Never arm the long-press on a trim handle: handle drags bypass the MOVE branch, so
+      // accumDx stays 0 and a slow trim would false-fire the lift at 250ms.
+      const onHandle = !!(e.target as HTMLElement)?.closest?.(".twick-track-element-handle");
+      if (!onHandle && canActivateReorder()) {
         touchDragRef.current = true;
         accumDxRef.current = 0;
         if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = setTimeout(() => {
           longPressTimerRef.current = null;
-          if (accumDxRef.current < 8 && canActivateReorder()) activateReorder();
+          // Re-check the drag type at fire time as a belt: a handle drag that somehow armed the
+          // timer must never lift.
+          if (
+            accumDxRef.current < 8 &&
+            dragType.current !== DRAG_TYPE.START &&
+            dragType.current !== DRAG_TYPE.END &&
+            canActivateReorder()
+          ) {
+            activateReorder();
+          }
         }, 250);
       }
     },
