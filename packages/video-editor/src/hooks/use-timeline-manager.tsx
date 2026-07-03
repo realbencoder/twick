@@ -266,16 +266,20 @@ export const useTimelineManager = (): TimelineManagerReturn => {
       };
       // If playback restarted mid-drag (space bar), settle the pool before permuting s/e.
       const ctrl = (window as unknown as {
-        __webcodecs_controller?: { isPlaying?: () => boolean; pause?: () => void };
+        __webcodecs_controller?: { isPlaying?: () => boolean; pause?: () => void; state?: string };
       }).__webcodecs_controller;
-      if (ctrl?.isPlaying?.()) {
-        ctrl.pause?.();
+      // PlaybackController exposes a `state` field, not isPlaying() — check both so the
+      // mid-drag playback-restart defer actually runs (adversarial review #118 finding 1).
+      const playing = ctrl?.isPlaying?.() ?? ctrl?.state === "playing";
+      if (playing) {
+        ctrl?.pause?.();
         requestAnimationFrame(commit);
       } else {
         commit();
       }
-    } catch {
-      /* non-fatal — a failed reorder leaves the timeline exactly as it was (pin never moved) */
+    } catch (err) {
+      // Non-fatal — the pin means the timeline is visibly unchanged — but never silent (#26).
+      console.error("[reorder] commit failed (timeline unchanged):", err);
     }
   };
 

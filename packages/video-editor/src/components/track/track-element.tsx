@@ -502,19 +502,28 @@ export const TrackElementView = memo(({
     return ELEMENT_COLORS.element;
   };
 
-  // Window blur mid-gesture: no mouseup/touchend will arrive — reset local drag + reorder state
-  // (the view cancels its own visuals on blur; nothing to restore since the pin never moved).
+  // Aborted-gesture reset: window blur / touchcancel / pointercancel mean no mouseup/touchend
+  // will arrive — reset local drag + reorder state (the view cancels its own visuals; nothing to
+  // restore since the pin never moved). Gated on isDragging OR isReordering: a stationary touch
+  // long-press lifts WITHOUT ever setting isDragging (the useDrag bind never fires), and a
+  // touchcancel there would otherwise leave the clip dimmed until the next tap (review #118).
   useEffect(() => {
-    if (!isDragging) return;
-    const onBlur = () => {
+    if (!isDragging && !isReordering) return;
+    const reset = () => {
       setIsDragging(false);
       onDragStateChange?.(false, element);
       settleReorder();
     };
-    window.addEventListener("blur", onBlur);
-    return () => window.removeEventListener("blur", onBlur);
+    window.addEventListener("blur", reset);
+    document.addEventListener("touchcancel", reset);
+    document.addEventListener("pointercancel", reset);
+    return () => {
+      window.removeEventListener("blur", reset);
+      document.removeEventListener("touchcancel", reset);
+      document.removeEventListener("pointercancel", reset);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDragging]);
+  }, [isDragging, isReordering]);
 
   const isSelected = useMemo(() => {
     return selectedIds.has(element.getId());
