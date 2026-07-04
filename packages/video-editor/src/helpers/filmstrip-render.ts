@@ -31,22 +31,61 @@ export function getFilmstripMeta(): FilmstripMeta | null {
   }
 }
 
-// Module-level sheet cache, shared across every clip (sheets are reused between clips + redraws).
-// Value: a decoded <img> ready to draw, or 'error' (load failed — never retried, degrades to blank).
-const SHEET_CACHE = new Map<string, HTMLImageElement | "error">();
+// BOUNDED, DOWNSCALED module-level sheet cache. A filmstrip draws frames from across a clip's WHOLE
+// span simultaneously (unlike scrub, which shows one frame near the playhead), so a full-length clip
+// can touch every sheet of a video at once — an 8-sheet cap of full-res sheets would thrash. Instead
+// we DOWNSCALE each sheet on load into a small offscreen canvas, cache it, and free the full <img>.
+// The downscale is chosen so each cached TILE stays ≥ TARGET_TILE_H px tall — always at least what
+// a retina timeline shows (~88px = 44px track × dpr 2), so the on-screen draw only ever downsamples,
+// never upsamples: PROVABLY no visible quality loss for portrait (480px tiles) OR landscape (270px
+// tiles). Result: an entire video's sheets fit in ~tens of MB, no thrash, no per-video pileup. Still
+// LRU-capped as a backstop, and clearFilmstripCache() is exported for editor unmount / video switch.
+const TARGET_TILE_H = 120; // ≥ the ~88px retina display height + headroom → downsample-only draw
+const MAX_SHEETS = 48; // one video's sheets max ~36 (TILE_BUDGET 900 / 25 per sheet); headroom
+// Per-video downscale so cached tiles are ~TARGET_TILE_H tall (never upscaled: cap at 1). tileH is
+// 480 (portrait) or 270 (landscape). All sheets of one video share tileH → one consistent scale.
+function scaleForTile(tileH: number): number {
+  return Math.min(1, TARGET_TILE_H / Math.max(1, tileH));
+}
+const SHEET_CACHE = new Map<string, HTMLCanvasElement>(); // insertion-ordered → LRU, downscaled
+const SHEET_ERRORS = new Set<string>(); // load-failed URLs — never retried, tiny
 // Per-URL set of redraw callbacks waiting on an in-flight load — ALL fire when the sheet decodes
 // (multiple clips can share a sheet; firing only the first caller's callback would leave the others
 // blank until an unrelated redraw).
 const SHEET_WAITERS = new Map<string, Set<() => void>>();
 
+function touchLRU(url: string, sheet: HTMLCanvasElement): void {
+  SHEET_CACHE.delete(url);
+  SHEET_CACHE.set(url, sheet); // re-insert at MRU end
+  while (SHEET_CACHE.size > MAX_SHEETS) {
+    const oldest = SHEET_CACHE.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    const evicted = SHEET_CACHE.get(oldest);
+    SHEET_CACHE.delete(oldest);
+    if (evicted) { evicted.width = 0; evicted.height = 0; } // free the backing store
+  }
+}
+
+/** Drop every cached sheet + pending waiter. Called on editor unmount / video switch. */
+export function clearFilmstripCache(): void {
+  SHEET_CACHE.forEach((c) => { c.width = 0; c.height = 0; });
+  SHEET_CACHE.clear();
+  SHEET_ERRORS.clear();
+  SHEET_WAITERS.clear();
+}
+
 /**
- * Return the decoded sheet for `url` if cached, else kick off a one-time load and return null.
- * `onLoad` fires once the sheet decodes so the caller can redraw. No crossOrigin — draw-only.
+ * Return the downscaled sheet canvas for `url` if cached, else kick off a one-time load + downscale
+ * (by `scale`) and return null. `onLoad` fires once ready so the caller can redraw. No crossOrigin
+ * — draw-only. `scale` is consistent per video (derived from tileH), so a URL always loads once.
  */
-function ensureSheet(url: string, onLoad: () => void): HTMLImageElement | null {
+function ensureSheet(url: string, scale: number, onLoad: () => void): HTMLCanvasElement | null {
+  if (SHEET_ERRORS.has(url)) return null;
   const cached = SHEET_CACHE.get(url);
-  if (cached === "error") return null;
-  if (cached) return cached;
+  if (cached) {
+    touchLRU(url, cached); // mark MRU so an actively-used sheet isn't evicted
+    return cached;
+  }
 
   const existing = SHEET_WAITERS.get(url);
   if (existing) {
@@ -58,8 +97,23 @@ function ensureSheet(url: string, onLoad: () => void): HTMLImageElement | null {
   SHEET_WAITERS.set(url, waiters);
   const img = new Image();
   img.onload = () => {
-    SHEET_CACHE.set(url, img);
     SHEET_WAITERS.delete(url);
+    // Downscale into a small offscreen canvas, then let the full <img> be GC'd. (drawImage of a
+    // cross-origin img taints the offscreen canvas, but we only ever drawImage it onward — never
+    // read it back — so the taint is inert.)
+    const w = Math.max(1, Math.round((img.naturalWidth || 1) * scale));
+    const h = Math.max(1, Math.round((img.naturalHeight || 1) * scale));
+    const off = document.createElement("canvas");
+    off.width = w;
+    off.height = h;
+    const octx = off.getContext("2d");
+    if (!octx) {
+      SHEET_ERRORS.add(url);
+      return;
+    }
+    octx.imageSmoothingQuality = "high";
+    octx.drawImage(img, 0, 0, w, h);
+    touchLRU(url, off);
     waiters.forEach((cb) => {
       try {
         cb();
@@ -69,24 +123,34 @@ function ensureSheet(url: string, onLoad: () => void): HTMLImageElement | null {
     });
   };
   img.onerror = () => {
-    SHEET_CACHE.set(url, "error");
+    SHEET_ERRORS.add(url);
     SHEET_WAITERS.delete(url);
   };
   img.src = url;
   return null;
 }
 
-/** Locate the sprite-sheet sub-rect for a SOURCE time (pure arithmetic — mirrors StoryboardSheets). */
+/**
+ * Locate the sprite-sheet sub-rect for a SOURCE time (mirrors StoryboardSheets), pre-scaled by the
+ * per-video `scale` so it indexes into the downscaled cached canvas.
+ */
 function locateTile(
   meta: FilmstripMeta,
-  sourceTime: number
+  sourceTime: number,
+  scale: number
 ): { sheetIdx: number; sx: number; sy: number; sw: number; sh: number } {
   const idx = Math.max(0, Math.min(meta.totalTiles - 1, Math.floor(sourceTime / meta.interval)));
   const sheetIdx = Math.floor(idx / meta.tilesPerSheet); // 0-indexed into sheetUrls
   const within = idx % meta.tilesPerSheet;
   const col = within % meta.cols;
   const row = Math.floor(within / meta.cols);
-  return { sheetIdx, sx: col * meta.tileW, sy: row * meta.tileH, sw: meta.tileW, sh: meta.tileH };
+  return {
+    sheetIdx,
+    sx: col * meta.tileW * scale,
+    sy: row * meta.tileH * scale,
+    sw: meta.tileW * scale,
+    sh: meta.tileH * scale,
+  };
 }
 
 export interface DrawFilmstripOpts {
@@ -128,15 +192,18 @@ export function drawClipFilmstrip(
   const frameW = Math.max(24, Math.round(heightPx * frameAspect));
   const n = Math.max(1, Math.min(120, Math.ceil(widthPx / frameW)));
   const rate = playbackRate > 0 ? playbackRate : 1;
+  // Per-video downscale (consistent across every sheet of this video) so cached tiles stay ≥ the
+  // on-screen frame height — the cache stores at this scale and the sub-rects index at this scale.
+  const scale = scaleForTile(meta.tileH);
 
   for (let i = 0; i < n; i++) {
     // Sample the CENTER of each frame slot → source time (honors cuts/reorders via sourceStart).
     const frac = (i + 0.5) / n;
     const sourceTime = sourceStart + frac * span * rate;
-    const loc = locateTile(meta, sourceTime);
+    const loc = locateTile(meta, sourceTime, scale);
     const url = meta.sheetUrls[loc.sheetIdx];
     if (!url) continue;
-    const img = ensureSheet(url, onSheetLoad);
+    const img = ensureSheet(url, scale, onSheetLoad);
     if (!img) continue; // still loading — leave transparent, redraw on load
     const dx = i * frameW;
     // Last frame may overrun; clamp its width so it doesn't spill past the clip edge.

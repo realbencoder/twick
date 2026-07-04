@@ -66,6 +66,7 @@ export type {
 export type { PlayerControlsProps, VideoEditorProps, VideoEditorConfig, TimelineTickConfig, TimelineZoomConfig, CanvasConfig };
 
 export { throttle, debounce } from "./helpers/function.utils";
+export { clearFilmstripCache } from "./helpers/filmstrip-render";
 // Constants and configurations
 export { ANIMATIONS, TEXT_EFFECTS };
 

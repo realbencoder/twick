@@ -106,11 +106,21 @@ export default function SeekTrack({
       [0.1, 2], [0.25, 5], [0.5, 5], [1, 4], [2, 4], [5, 5], [10, 5],
       [15, 3], [30, 6], [60, 4], [120, 4], [300, 5], [600, 5], [900, 3], [1800, 6], [3600, 6],
     ];
-    let chosen = NICE[NICE.length - 1];
-    for (const cfg of NICE) {
-      if (cfg[0] >= idealSec) { chosen = cfg; break; }
+    let idx = NICE.length - 1;
+    for (let k = 0; k < NICE.length; k++) {
+      if (NICE[k][0] >= idealSec) { idx = k; break; }
     }
-    const [major, minorSub] = chosen;
+    // DENSITY CAP: the ruler renders one <div> per minor tick across the WHOLE content width, so a
+    // long video at high zoom could otherwise emit thousands of nodes. Coarsen up the NICE table
+    // until the MAJOR-label count is bounded, then thin the minor subdivisions if minors are still
+    // too many. Keeps DOM bounded (~a few hundred ticks) at any zoom/duration.
+    const MAX_MAJORS = 300;
+    const MAX_MINORS = 700;
+    while (idx < NICE.length - 1 && duration / NICE[idx][0] > MAX_MAJORS) idx++;
+    let [major, minorSub] = NICE[idx];
+    while (minorSub > 1 && duration / (major / minorSub) > MAX_MINORS) {
+      minorSub = Math.max(1, Math.floor(minorSub / 2));
+    }
     return {
       majorIntervalSec: major,
       minorIntervalSec: minorSub > 0 ? major / minorSub : major,

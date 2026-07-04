@@ -5,7 +5,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import ControlManager from "./controls/control-manager";
 import {
   DEFAULT_TIMELINE_ZOOM_CONFIG,
-  DEFAULT_TIMELINE_TICK_CONFIGS,
   DEFAULT_ELEMENT_COLORS,
 } from "../helpers/constants";
 import { CanvasConfig, ElementColors } from "../helpers/types";
@@ -198,8 +197,11 @@ const VideoEditor: React.FC<VideoEditorProps> = ({
 }) => {
   const zoomConfig =
     editorConfig.timelineZoomConfig ?? DEFAULT_TIMELINE_ZOOM_CONFIG;
-  const timelineTickConfigs =
-    editorConfig?.timelineTickConfigs ?? DEFAULT_TIMELINE_TICK_CONFIGS;
+  // Absent an explicit override, leave this undefined so SeekTrack uses its ZOOM-AWARE tick
+  // density (density chosen from px/sec) instead of the coarse duration buckets. The bucketed
+  // DEFAULT_TIMELINE_TICK_CONFIGS shadowed the zoom-aware path and left a 10.0s clip showing only
+  // "5s"/"10s" — the exact complaint this pass fixes. An explicit editorConfig override still wins.
+  const timelineTickConfigs = editorConfig?.timelineTickConfigs;
   const elementColors = useMemo(
     () => ({
       ...DEFAULT_ELEMENT_COLORS,
