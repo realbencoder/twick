@@ -40,6 +40,8 @@ export const AudioPanel = ({
   onItemSelect,
   onUrlAdd,
   isLoading,
+  dragNeedsProxy,
+  proxyingId,
   canLoadMore,
   onLoadMore,
 }: AudioPanelProps) => {
@@ -67,12 +69,31 @@ export const AudioPanel = ({
               onDragStart={(e) => {
                 e.dataTransfer.setData(
                   TIMELINE_DROP_MEDIA_TYPE,
-                  JSON.stringify({ type: "audio", url: item.url })
+                  JSON.stringify({
+                    type: "audio",
+                    url: item.url,
+                    // Public items must proxy before entering the timeline (drop path resolves it).
+                    needsProxy: !!dragNeedsProxy,
+                    name: `pexels-${item.id}.mp3`,
+                  })
                 );
                 e.dataTransfer.effectAllowed = "copy";
               }}
               className="media-list-item media-item-draggable"
+            
+              style={proxyingId === item.id ? { opacity: 0.55, pointerEvents: "none" } : undefined}
             >
+              {proxyingId === item.id && (
+                <div
+                  style={{
+                    position: "absolute", inset: 0, display: "flex", alignItems: "center",
+                    justifyContent: "center", zIndex: 5, fontSize: 11, fontWeight: 600,
+                    color: "#fff", background: "rgba(0,0,0,0.45)", borderRadius: 6,
+                  }}
+                >
+                  Adding…
+                </div>
+              )}
               {/* Audio Info */}
               <div className="media-list-content">
                 {/* Play/Pause button */}
@@ -106,6 +127,7 @@ export const AudioPanel = ({
                     e.stopPropagation();
                     onItemSelect(item, true);
                   }}
+                  onDoubleClick={(e) => e.stopPropagation()}
                   className="media-action-btn"
                 >
                   <Plus className="icon-sm" />

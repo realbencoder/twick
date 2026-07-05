@@ -143,13 +143,16 @@ export function useTimelineDrop({
         try {
           const data = JSON.parse(
             e.dataTransfer.getData(TIMELINE_DROP_MEDIA_TYPE) || "{}"
-          ) as { type?: DroppableAssetType; url?: string };
+          ) as { type?: DroppableAssetType; url?: string; needsProxy?: boolean; name?: string };
           if (data.type && data.url) {
+            // Public items proxy through S3 first — a raw pexels URL must never reach the timeline.
+            const resolvedUrl = await resolveDroppedMediaUrl(data);
+            if (!resolvedUrl) return;
             await onDrop({
               track,
               timeSec: pos.timeSec,
               type: data.type,
-              url: data.url,
+              url: resolvedUrl,
             });
           }
         } catch {
@@ -181,6 +184,41 @@ export function useTimelineDrop({
   );
 
   return { preview, isDraggingOver, handleDragOver, handleDragLeave, handleDrop };
+}
+
+/**
+ * Resolve a panel-dragged media URL before any element is created. Public (Pexels) items set
+ * `needsProxy` — their raw external URL must NEVER enter project_data (CORS/expiry: the exact
+ * failure class /api/assets/proxy exists to prevent; the CLICK path proxies, the drag path
+ * previously didn't — audit finding #1). The proxy runs through the app-registered
+ * `window.__twick_proxy_media` bridge (same app↔editor pattern as __twick_waveform /
+ * __webcodecs_controller) so auth stays in the app. On ANY failure: fire
+ * 'twick-media-add-failed' (the app shows a toast) and return null — never fall back to the
+ * raw URL (audit finding #3: silent fallback persisted broken assets).
+ */
+export async function resolveDroppedMediaUrl(data: {
+  type?: DroppableAssetType;
+  url?: string;
+  needsProxy?: boolean;
+  name?: string;
+}): Promise<string | null> {
+  if (!data.url) return null;
+  if (!data.needsProxy) return data.url; // My-assets / OS files — already ours
+  try {
+    window.dispatchEvent(new CustomEvent("twick-media-add-started"));
+    const proxy = (window as unknown as {
+      __twick_proxy_media?: (url: string, type: string, name?: string) => Promise<string | null>;
+    }).__twick_proxy_media;
+    const proxied = typeof proxy === "function" ? await proxy(data.url, data.type ?? "video", data.name) : null;
+    if (proxied) {
+      window.dispatchEvent(new CustomEvent("twick-media-add-done"));
+      return proxied;
+    }
+  } catch {
+    /* fall through to the failure event below */
+  }
+  window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
+  return null;
 }
 
 export function createElementFromDrop(

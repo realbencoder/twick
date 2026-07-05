@@ -3,6 +3,10 @@ import type { MediaItem } from "@twick/video-editor";
 export type MediaType = "video" | "audio" | "image";
 
 export interface MediaPanelBasePropsCommon {
+  /** Public (Pexels) tab: dragged items must proxy through S3 before entering the timeline. */
+  dragNeedsProxy?: boolean;
+  /** Item id currently being proxied (click path) — the panel shows a spinner on that tile. */
+  proxyingId?: string | null;
   items: MediaItem[];
   isLoading: boolean;
   acceptFileTypes: string[];

@@ -140,6 +140,9 @@ function VideoPublicAssetsSection(props: PanelProps) {
 
   // Proxy public video assets through our S3 before adding to timeline
   const handlePublicSelection = async (item: MediaItem, forceAdd?: boolean) => {
+    // Re-entrancy guard: the proxy takes seconds; without this every extra click during the
+    // window queued another identical add (audit finding #2 — duplicate B-roll stacks).
+    if (proxyingId) return;
     setProxyingId(item.id);
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -153,10 +156,12 @@ function VideoPublicAssetsSection(props: PanelProps) {
         const data = await res.json();
         handleSelection({ ...item, url: data.url }, forceAdd);
       } else {
-        handleSelection(item, forceAdd);
+        // Proxy failed — do NOT fall back to the raw external URL (it persists a broken,
+        // CORS-hostile asset into project_data; audit finding #3). Surface it instead.
+        window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
       }
     } catch {
-      handleSelection(item, forceAdd);
+      window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
     }
     setProxyingId(null);
   };
@@ -290,6 +295,8 @@ function VideoPublicAssetsSection(props: PanelProps) {
       </div>
       <VideoPanel
         items={publicItems}
+        dragNeedsProxy
+        proxyingId={proxyingId}
         onItemSelect={handlePublicSelection}
         onFileUpload={() => { }}
         isLoading={isPublicLoading || !!proxyingId}

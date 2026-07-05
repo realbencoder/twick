@@ -137,6 +137,9 @@ function AudioPublicAssetsSection(props: PanelProps) {
   const [proxyingId, setProxyingId] = useState<string | null>(null);
 
   const handlePublicSelection = async (item: MediaItem, forceAdd?: boolean) => {
+    // Re-entrancy guard: the proxy takes seconds; without this every extra click during the
+    // window queued another identical add (audit finding #2 — duplicate stacks).
+    if (proxyingId) return;
     setProxyingId(item.id);
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -150,10 +153,12 @@ function AudioPublicAssetsSection(props: PanelProps) {
         const data = await res.json();
         handleSelection({ ...item, url: data.url }, forceAdd);
       } else {
-        handleSelection(item, forceAdd);
+        // Proxy failed — do NOT fall back to the raw external URL (persists a broken,
+        // CORS-hostile asset into project_data). Surface it instead.
+        window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
       }
     } catch {
-      handleSelection(item, forceAdd);
+      window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
     }
     setProxyingId(null);
   };
@@ -252,6 +257,8 @@ function AudioPublicAssetsSection(props: PanelProps) {
       </div>
       <AudioPanel
         items={publicItems}
+        dragNeedsProxy
+        proxyingId={proxyingId}
         searchQuery={publicSearchQuery}
         onSearchChange={setPublicSearchQuery}
         onItemSelect={handlePublicSelection}

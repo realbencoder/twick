@@ -150,6 +150,9 @@ function ImagePublicAssetsSection(props: PanelProps) {
 
   // Proxy public assets through our S3 before adding to timeline
   const handlePublicSelection = async (item: MediaItem, forceAdd?: boolean) => {
+    // Re-entrancy guard: the proxy takes seconds; without this every extra click during the
+    // window queued another identical add (audit finding #2 — duplicate stacks).
+    if (proxyingId) return;
     setProxyingId(item.id);
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -163,11 +166,12 @@ function ImagePublicAssetsSection(props: PanelProps) {
         const data = await res.json();
         handleSelection({ ...item, url: data.url }, forceAdd);
       } else {
-        // Fallback to direct URL
-        handleSelection(item, forceAdd);
+        // Proxy failed — do NOT fall back to the raw external URL (persists a broken,
+        // CORS-hostile asset into project_data). Surface it instead.
+        window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
       }
     } catch {
-      handleSelection(item, forceAdd);
+      window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
     }
     setProxyingId(null);
   };
@@ -296,6 +300,8 @@ function ImagePublicAssetsSection(props: PanelProps) {
       </div>
       <ImagePanel
         items={publicItems}
+        dragNeedsProxy
+        proxyingId={proxyingId}
         searchQuery={publicSearchQuery}
         onSearchChange={setPublicSearchQuery}
         onItemSelect={handlePublicSelection}

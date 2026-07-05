@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { getAssetTypeFromFile, DroppableAssetType } from "../helpers/asset-type";
 import { TIMELINE_DROP_MEDIA_TYPE } from "../helpers/constants";
+import { resolveDroppedMediaUrl } from "./use-timeline-drop";
 
 export interface CanvasDropPayload {
   type: DroppableAssetType;
@@ -51,10 +52,14 @@ export function useCanvasDrop({
         try {
           const data = JSON.parse(
             e.dataTransfer.getData(TIMELINE_DROP_MEDIA_TYPE) || "{}"
-          ) as { type?: DroppableAssetType; url?: string };
+          ) as { type?: DroppableAssetType; url?: string; needsProxy?: boolean; name?: string };
           if (data.type && data.url) {
+            // Public items proxy through S3 first (see resolveDroppedMediaUrl) — null = failed,
+            // event already fired, drop is abandoned cleanly.
+            const resolvedUrl = await resolveDroppedMediaUrl(data);
+            if (!resolvedUrl) return;
             type = data.type;
-            url = data.url;
+            url = resolvedUrl;
           }
         } catch {
           // Invalid JSON
