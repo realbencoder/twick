@@ -53,6 +53,7 @@ const TrackHeader = ({
           ? "twick-track-header-selected"
           : "twick-track-header-default"
       } ${isLocked ? "twick-track-header-locked" : ""}`}
+      title={label}
       draggable={!isLocked}
       onClick={(e) => onSelect(track, e)}
       onDragStart={(e) => !isLocked && onDragStart(e, track)}
@@ -77,22 +78,6 @@ const TrackHeader = ({
         <div className="twick-track-header-grip">
           <GripVertical size={14} />
         </div>
-        <span
-          className="twick-track-header-label"
-          style={{
-            fontSize: "11px",
-            fontWeight: 600,
-            color: "rgba(255,255,255,0.82)",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            flex: 1,
-            minWidth: 0,
-          }}
-          title={label}
-        >
-          {label}
-        </span>
         <button
           className="twick-track-lock-btn"
           onClick={toggleLock}
