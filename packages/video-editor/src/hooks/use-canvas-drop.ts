@@ -46,6 +46,7 @@ export function useCanvasDrop({
 
       let type: DroppableAssetType | null = null;
       let url: string | null = null;
+      let wasProxied = false;
 
       // Handle media dragged from studio panels
       if (e.dataTransfer.types.includes(TIMELINE_DROP_MEDIA_TYPE)) {
@@ -60,6 +61,7 @@ export function useCanvasDrop({
             if (!resolvedUrl) return;
             type = data.type;
             url = resolvedUrl;
+            wasProxied = !!data.needsProxy;
           }
         } catch {
           // Invalid JSON
@@ -90,12 +92,18 @@ export function useCanvasDrop({
         return;
       }
 
-      await onDrop({
-        type,
-        url,
-        canvasX: getCanvasX(e, containerRef.current, videoSize),
-        canvasY: getCanvasY(e, containerRef.current, videoSize),
-      });
+      try {
+        await onDrop({
+          type,
+          url,
+          canvasX: getCanvasX(e, containerRef.current, videoSize),
+          canvasY: getCanvasY(e, containerRef.current, videoSize),
+        });
+        if (wasProxied) window.dispatchEvent(new CustomEvent("twick-media-add-done"));
+      } catch {
+        // Post-proxy add failed — surface it (rule #26); no-op toast-wise for non-proxied drops.
+        if (wasProxied) window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
+      }
     },
     [enabled, containerRef, videoSize, onDrop]
   );

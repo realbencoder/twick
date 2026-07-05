@@ -154,9 +154,14 @@ export function useTimelineDrop({
               type: data.type,
               url: resolvedUrl,
             });
+            // Add actually completed — settle the loading toast (only meaningful when a proxy
+            // fired 'started'; the app's listener no-ops otherwise).
+            if (data.needsProxy) window.dispatchEvent(new CustomEvent("twick-media-add-done"));
           }
         } catch {
-          // Invalid JSON or missing fields
+          // The add stage failed after a successful proxy — surface it, never swallow (rule #26 /
+          // review #120: the old empty catch let a failed add read as success).
+          window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
         }
         return;
       }
@@ -210,10 +215,10 @@ export async function resolveDroppedMediaUrl(data: {
       __twick_proxy_media?: (url: string, type: string, name?: string) => Promise<string | null>;
     }).__twick_proxy_media;
     const proxied = typeof proxy === "function" ? await proxy(data.url, data.type ?? "video", data.name) : null;
-    if (proxied) {
-      window.dispatchEvent(new CustomEvent("twick-media-add-done"));
-      return proxied;
-    }
+    // NOTE: 'done' is NOT fired here — proxy success isn't add success (the element can still
+    // fail to land, e.g. its track was rebuilt mid-await). Call sites fire done/failed after
+    // the add actually completes (review #120 finding 1).
+    if (proxied) return proxied;
   } catch {
     /* fall through to the failure event below */
   }

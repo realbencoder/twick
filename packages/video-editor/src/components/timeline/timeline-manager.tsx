@@ -68,8 +68,14 @@ const TimelineManager = ({
       const element = createElementFromDrop(type, url, videoResolution);
       element.setStart(timeSec);
 
+      // Re-resolve the drop track by ID: a proxied drop awaits 5-30s between capture and here,
+      // and any ripple/reorder/undo in that window rebuilds every Track via fromJSON — adding to
+      // the DETACHED instance would mutate an orphan and silently persist nothing (review #120
+      // finding 1). A track deleted mid-flight falls through to the insert-new-track branch.
+      const liveTrack = track ? editor.getTrackById(track.getId()) ?? null : null;
+
       // If no target track, insert above video (after caption track)
-      let targetTrack = track;
+      let targetTrack = liveTrack;
       if (!targetTrack) {
         const _tlTracks = editor.getTimelineData()?.tracks || [];
         const _tlCaptionIdx = _tlTracks.findIndex((t2: any) => t2.getType() === TRACK_TYPES.CAPTION);

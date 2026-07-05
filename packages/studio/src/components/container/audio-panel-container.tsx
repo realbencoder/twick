@@ -156,7 +156,9 @@ function AudioPublicAssetsSection(props: PanelProps) {
       });
       if (res.ok) {
         const data = await res.json();
-        handleSelection({ ...item, url: data.url }, forceAdd);
+        // Awaited so an ADD-stage rejection (not just a proxy failure) hits the catch below
+        // and surfaces via the failed event instead of an unhandled rejection (review #120 nit).
+        await handleSelection({ ...item, url: data.url }, forceAdd);
       } else {
         // Proxy failed — do NOT fall back to the raw external URL (persists a broken,
         // CORS-hostile asset into project_data). Surface it instead.
