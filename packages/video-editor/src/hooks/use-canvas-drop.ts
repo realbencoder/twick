@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { getAssetTypeFromFile, DroppableAssetType } from "../helpers/asset-type";
 import { TIMELINE_DROP_MEDIA_TYPE } from "../helpers/constants";
-import { resolveDroppedMediaUrl } from "./use-timeline-drop";
+import { resolveDroppedMediaUrl, uploadDroppedFile } from "./use-timeline-drop";
 
 export interface CanvasDropPayload {
   type: DroppableAssetType;
@@ -74,17 +74,20 @@ export function useCanvasDrop({
         for (const file of files) {
           const detectedType = getAssetTypeFromFile(file);
           if (detectedType) {
-            type = detectedType;
-            url = URL.createObjectURL(file);
+            // Permanent CDN URL via the app upload bridge — a revoked blob: src broke the element
+            // in-session and on restore (audit persistence trace).
+            const uploadedUrl = await uploadDroppedFile(file);
+            if (!uploadedUrl) return;
             try {
               await onDrop({
-                type,
-                url,
+                type: detectedType,
+                url: uploadedUrl,
                 canvasX: getCanvasX(e, containerRef.current, videoSize),
                 canvasY: getCanvasY(e, containerRef.current, videoSize),
               });
-            } finally {
-              URL.revokeObjectURL(url);
+              window.dispatchEvent(new CustomEvent("twick-media-add-done"));
+            } catch {
+              window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
             }
             return;
           }

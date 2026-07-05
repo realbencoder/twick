@@ -171,16 +171,21 @@ export function useTimelineDrop({
       for (const file of files) {
         const type = getAssetTypeFromFile(file);
         if (!type) continue;
-        const blobUrl = URL.createObjectURL(file);
+        // Upload to S3/CDN via the app bridge — a blob: URL revoked after add broke the element
+        // in-session AND persisted a dead src (audit persistence trace). Permanent URL only.
+        const uploadedUrl = await uploadDroppedFile(file);
+        if (!uploadedUrl) break;
         try {
+          const liveTrack = track;
           await onDrop({
-            track,
+            track: liveTrack,
             timeSec: pos.timeSec,
             type,
-            url: blobUrl,
+            url: uploadedUrl,
           });
-        } finally {
-          URL.revokeObjectURL(blobUrl);
+          window.dispatchEvent(new CustomEvent("twick-media-add-done"));
+        } catch {
+          window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
         }
         break; // Only first valid file for now
       }
@@ -221,6 +226,28 @@ export async function resolveDroppedMediaUrl(data: {
     if (proxied) return proxied;
   } catch {
     /* fall through to the failure event below */
+  }
+  window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
+  return null;
+}
+
+/**
+ * Upload an OS-dragged File through the app bridge (`window.__twick_upload_media` — presign + PUT
+ * + CDN readUrl, auth in the app) and return a PERMANENT URL. The old path created a blob: URL and
+ * revoked it immediately after the add — the element broke even in-session, and auto-save persisted
+ * a dead blob: src (B-roll audit, persistence trace). Fires the same started/done/failed events as
+ * the proxy path so the user sees progress + honest failures.
+ */
+export async function uploadDroppedFile(file: File): Promise<string | null> {
+  try {
+    window.dispatchEvent(new CustomEvent("twick-media-add-started"));
+    const upload = (window as unknown as {
+      __twick_upload_media?: (file: File) => Promise<string | null>;
+    }).__twick_upload_media;
+    const url = typeof upload === "function" ? await upload(file) : null;
+    if (url) return url; // caller fires 'done' after the ADD completes
+  } catch {
+    /* fall through */
   }
   window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
   return null;

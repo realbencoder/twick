@@ -179,6 +179,17 @@ export const TrackElementView = memo(({
       if (useCors) video.crossOrigin = 'anonymous';
       video.muted = true;
       video.preload = 'auto';
+      // Cache-busting param on the CORS attempt (root cause of 'thumbnail disappears on editor
+      // re-entry'): a prior plain <video> playback (no Origin header) poisons the browser/CDN
+      // cache with a no-ACAO response; the crossOrigin extraction then hits that cached copy,
+      // errors, falls back to the no-CORS retry — which loads but TAINTS the canvas, so
+      // toDataURL throws and the thumbnail is silently skipped. A fresh cache key forces a
+      // request WITH Origin → ACAO attached → extraction succeeds. NEVER append to presigned
+      // URLs (X-Amz- signature covers the query string — extra params 403).
+      let extractSrc = src;
+      if (useCors && !src.includes('X-Amz-') && !src.startsWith('blob:')) {
+        extractSrc = src + (src.includes('?') ? '&' : '?') + 'cs_thumb=1';
+      }
 
       video.onloadeddata = () => {
         if (cancelled) return;
@@ -214,7 +225,7 @@ export const TrackElementView = memo(({
           tryExtract(false);
         }
       };
-      video.src = src;
+      video.src = extractSrc;
     }
 
     tryExtract(true);
