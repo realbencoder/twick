@@ -12,36 +12,13 @@ import { throttle } from "@twick/video-editor";
 export const AudioPanelContainer = (props: PanelProps) => {
   const [activeSource, setActiveSource] = useState<"user" | "public">("user");
 
-  return (
-    <>
-      <div className="panel-section">
-        <div className="flex gap-2">
-          <button
-            type="button"
-            className={`btn-ghost w-full ${activeSource === "user" ? "btn-primary" : ""
-              }`}
-            onClick={() => setActiveSource("user")}
-          >
-            My assets
-          </button>
-          <button
-            type="button"
-            className={`btn-ghost w-full ${activeSource === "public" ? "btn-primary" : ""
-              }`}
-            onClick={() => setActiveSource("public")}
-          >
-            Public
-          </button>
-        </div>
-      </div>
-
-      {activeSource === "user" ? (
-        <AudioUserAssetsSection {...props} />
-      ) : (
-        <AudioPublicAssetsSection {...props} />
-      )}
-    </>
-  );
+  // AUDIO has no real public provider: Pexels (our stock source) has NO audio API, so the
+  // "Public" tab's search silently fell into the VIDEO branch and served Pexels videos
+  // mislabeled as music (stored .mp3, added as AudioElements). Hidden until a real licensed
+  // music source ships (product decision, Ben 2026-07-05). Upload + the Pixabay link stay.
+  void activeSource;
+  void setActiveSource;
+  return <AudioUserAssetsSection {...props} />;
 };
 
 function AudioUserAssetsSection(props: PanelProps) {
@@ -124,6 +101,9 @@ function AudioUserAssetsSection(props: PanelProps) {
   );
 }
 
+// Kept (referenced via `void`) for when a real licensed music source ships — the whole proxied
+// add path in here still works; only the PROVIDER was fake (Pexels videos as audio).
+void AudioPublicAssetsSection;
 function AudioPublicAssetsSection(props: PanelProps) {
   const { handleSelection } = useMediaPanel(
     "audio",

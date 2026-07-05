@@ -18,6 +18,7 @@ import {
 import { ElementColors } from "../../helpers/types";
 import { drawClipWaveform, getTimelineWaveform } from "../../helpers/waveform-render";
 import { drawClipFilmstrip, getFilmstripMeta } from "../../helpers/filmstrip-render";
+import { Volume2, VolumeX } from "lucide-react";
 import "../../styles/timeline.css";
 
 // Thumbnail cache keyed by SOURCE (not element id) so split-clone siblings sharing a src reuse one
@@ -580,6 +581,17 @@ export const TrackElementView = memo(({
     return selectedIds.has(element.getId());
   }, [selectedIds, element]);
 
+  // Audio-state badge for video clips: you previously could NOT tell whether a clip would make
+  // sound (B-roll defaults muted by design, but nothing said so — founder seed bug A). Reads
+  // props.volume at render time (same pattern as wfVolume) so the Playback panel's slider
+  // updates it live. Muted = crossed speaker; audible = speaker.
+  const isVideoEl = element.getType() === "video";
+  const badgeVolume = isVideoEl
+    ? Number(((element as any).getProps?.() ?? {}).volume ?? 1)
+    : 1;
+  const showAudioBadge = isVideoEl;
+  const isMutedClip = badgeVolume <= 0;
+
   const hasHandles =
     selectedItem?.getId() === element.getId();
 
@@ -685,6 +697,28 @@ export const TrackElementView = memo(({
             {...bindStartHandle()}
             className="twick-track-element-handle twick-track-element-handle-start"
           />
+        ) : null}
+        {showAudioBadge ? (
+          <div
+            title={isMutedClip ? "Muted — this clip won't make sound (set volume in Playback)" : "This clip plays audio"}
+            style={{
+              position: "absolute",
+              top: 3,
+              right: 4,
+              zIndex: 3,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 16,
+              height: 16,
+              borderRadius: 4,
+              background: "rgba(0,0,0,0.55)",
+              color: isMutedClip ? "rgba(255,255,255,0.55)" : "#4ade80",
+              pointerEvents: "none",
+            }}
+          >
+            {isMutedClip ? <VolumeX size={11} /> : <Volume2 size={11} />}
+          </div>
         ) : null}
         <div className="twick-track-element-content">
           {element.getType() === TIMELINE_ELEMENT_TYPE.EFFECT
