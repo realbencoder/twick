@@ -179,18 +179,29 @@ export function drawClipFilmstrip(
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
-  canvas.width = Math.max(1, Math.round(widthPx * dpr));
-  canvas.height = Math.max(1, Math.round(heightPx * dpr));
-  canvas.style.width = `${widthPx}px`;
-  canvas.style.height = `${heightPx}px`;
+  // BUG-1 FIX: set ONLY the backing store from the measured CSS size — never `canvas.style.width/
+  // height`. The JSX gives the canvas `position:absolute; inset:0` (fills the clip); pinning an
+  // inline px width overrode that and froze the canvas at its first-draw width, so a zoom-in widened
+  // the clip but not the canvas → the filmstrip only covered the left and the rest went bare. The
+  // waveform canvas avoids exactly this — it also sets only canvas.width/height and lets CSS drive
+  // display size. (Guard the assignment so an unchanged size doesn't needlessly re-clear.)
+  const bw = Math.max(1, Math.round(widthPx * dpr));
+  const bh = Math.max(1, Math.round(heightPx * dpr));
+  if (canvas.width !== bw) canvas.width = bw;
+  if (canvas.height !== bh) canvas.height = bh;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, widthPx, heightPx);
 
-  // Each frame keeps the tile's aspect; cap the count so a very long clip doesn't blit hundreds of
-  // frames per paint (16 frames min-width when the aspect makes them tiny).
   const frameAspect = meta.tileW / (meta.tileH || 1);
-  const frameW = Math.max(24, Math.round(heightPx * frameAspect));
-  const n = Math.max(1, Math.min(120, Math.ceil(widthPx / frameW)));
+  // Aspect-correct target frame width; the COUNT is capped so a very wide clip doesn't blit hundreds
+  // of frames per paint.
+  const idealW = Math.max(24, Math.round(heightPx * frameAspect));
+  const n = Math.max(1, Math.min(120, Math.ceil(widthPx / idealW)));
+  // BUG-2 FIX: slot each frame at widthPx/n so the n frames TILE the clip edge-to-edge. When the
+  // count isn't capped this equals the aspect-correct width; when it IS (very wide clip), frames get
+  // slightly wider instead of leaving the right side bare (the old fixed-idealW spacing left a gap
+  // past idealW*120).
+  const slotW = widthPx / n;
   const rate = playbackRate > 0 ? playbackRate : 1;
   // Per-video downscale (consistent across every sheet of this video) so cached tiles stay ≥ the
   // on-screen frame height — the cache stores at this scale and the sub-rects index at this scale.
@@ -205,10 +216,10 @@ export function drawClipFilmstrip(
     if (!url) continue;
     const img = ensureSheet(url, scale, onSheetLoad);
     if (!img) continue; // still loading — leave transparent, redraw on load
-    const dx = i * frameW;
-    // Last frame may overrun; clamp its width so it doesn't spill past the clip edge.
-    const drawW = Math.min(frameW, widthPx - dx);
-    if (drawW <= 0) break;
+    const dx = i * slotW;
+    // Last slot reaches widthPx exactly; the min is float-safety.
+    const drawW = Math.min(slotW, widthPx - dx);
+    if (drawW <= 0.5) break;
     try {
       ctx.drawImage(img, loc.sx, loc.sy, loc.sw, loc.sh, dx, 0, drawW, heightPx);
     } catch {
