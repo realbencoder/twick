@@ -176,9 +176,9 @@ export function useTimelineDrop({
         const uploadedUrl = await uploadDroppedFile(file);
         if (!uploadedUrl) break;
         try {
-          const liveTrack = track;
+          // (Stale-track safety lives downstream: handleDropOnTimeline re-resolves by id.)
           await onDrop({
-            track: liveTrack,
+            track,
             timeSec: pos.timeSec,
             type,
             url: uploadedUrl,
