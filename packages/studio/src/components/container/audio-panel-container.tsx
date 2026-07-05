@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useMediaPanel } from "../../hooks/use-media-panel";
 import { AudioPanel } from "../panel/audio-panel";
 import type { PanelProps } from "../../types";
@@ -135,11 +135,16 @@ function AudioPublicAssetsSection(props: PanelProps) {
     props.videoResolution,
   );
   const [proxyingId, setProxyingId] = useState<string | null>(null);
+  // Ref mirror for the re-entrancy guard (house rule #9): a useState-only guard has a stale-
+  // closure window between click 1's setState and React's commit — two near-simultaneous clicks
+  // could both pass. The ref is set synchronously, so the second caller always sees it.
+  const proxyingRef = useRef(false);
 
   const handlePublicSelection = async (item: MediaItem, forceAdd?: boolean) => {
     // Re-entrancy guard: the proxy takes seconds; without this every extra click during the
     // window queued another identical add (audit finding #2 — duplicate stacks).
-    if (proxyingId) return;
+    if (proxyingRef.current) return;
+    proxyingRef.current = true;
     setProxyingId(item.id);
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -161,6 +166,7 @@ function AudioPublicAssetsSection(props: PanelProps) {
       window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
     }
     setProxyingId(null);
+    proxyingRef.current = false;
   };
 
   const assetLibrary = getAssetLibrary();
