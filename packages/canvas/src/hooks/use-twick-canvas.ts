@@ -144,25 +144,31 @@ export const useTwickCanvas = ({
     }
   };
 
-  // ── Center alignment guides ──
+  // ── Alignment snap + guides ──
   const GUIDE_SNAP_THRESHOLD = 5; // pixels
-  const guidelinesRef = useRef<{ vertical: boolean; horizontal: boolean }>({
+  const guidelinesRef = useRef<{
+    vertical: boolean;
+    horizontal: boolean;
+    /** Element-to-element / canvas-edge guide lines (canvas coords) drawn while dragging. */
+    lines: { axis: "v" | "h"; pos: number }[];
+  }>({
     vertical: false,
     horizontal: false,
+    lines: [],
   });
 
   /**
-   * Draws centering guide lines on the canvas overlay after each render.
-   * Shows a blue dashed line when an element is centered horizontally or vertically.
+   * Draws alignment guide lines on the canvas overlay after each render:
+   * dashed lines for canvas-center snaps and for element/canvas-edge snaps.
    */
   const drawGuidelines = (canvas: FabricCanvas) => {
     const ctx = canvas.getTopContext();
     if (!ctx) return;
-    const { vertical, horizontal } = guidelinesRef.current;
-    if (!vertical && !horizontal) return;
+    const { vertical, horizontal, lines } = guidelinesRef.current;
+    if (!vertical && !horizontal && lines.length === 0) return;
 
     ctx.save();
-    ctx.strokeStyle = "#3b82f6";
+    ctx.strokeStyle = "#f97316";
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
 
@@ -178,6 +184,17 @@ export const useTwickCanvas = ({
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(canvas.width!, y);
+      ctx.stroke();
+    }
+    for (const line of lines) {
+      ctx.beginPath();
+      if (line.axis === "v") {
+        ctx.moveTo(line.pos, 0);
+        ctx.lineTo(line.pos, canvas.height!);
+      } else {
+        ctx.moveTo(0, line.pos);
+        ctx.lineTo(canvas.width!, line.pos);
+      }
       ctx.stroke();
     }
     ctx.restore();
@@ -211,8 +228,6 @@ export const useTwickCanvas = ({
       const snapV = Math.abs(objCenterX - canvasW / 2) < GUIDE_SNAP_THRESHOLD;
       const snapH = Math.abs(objCenterY - canvasH / 2) < GUIDE_SNAP_THRESHOLD;
 
-      guidelinesRef.current = { vertical: snapV, horizontal: snapH };
-
       if (snapV) {
         target.left = originX === "center"
           ? canvasW / 2
@@ -223,6 +238,73 @@ export const useTwickCanvas = ({
           ? canvasH / 2
           : canvasH / 2 - (target.height! * (target.scaleY ?? 1)) / 2;
       }
+
+      // ── Element-to-element + canvas-edge snap ──
+      // The dragged object's edges/center snap to other objects' edges/centers and to
+      // the canvas edges. Canvas-CENTER snap above wins its axis (skip element snap
+      // there so the two can't fight). Hold Cmd/Ctrl to temporarily bypass snapping —
+      // Shift is taken by axis-lock.
+      const lines: { axis: "v" | "h"; pos: number }[] = [];
+      const bypassSnap = !!(pointerEvent && (pointerEvent.metaKey || pointerEvent.ctrlKey));
+      if (!bypassSnap) {
+        const w = target.width! * (target.scaleX ?? 1);
+        const h = target.height! * (target.scaleY ?? 1);
+        // Origin-independent outer bounds AFTER the center snap adjusted left/top.
+        const tLeft = originX === "center" ? target.left! - w / 2 : target.left!;
+        const tTop = originY === "center" ? target.top! - h / 2 : target.top!;
+        const xEdges = [tLeft, tLeft + w / 2, tLeft + w];
+        const yEdges = [tTop, tTop + h / 2, tTop + h];
+
+        // Candidates: canvas edges + every other object's edges/centers. Objects inside
+        // an ActiveSelection ARE the drag target — exclude them or they'd snap to themselves.
+        const selectionChildren: unknown[] = (target as any)._objects ?? [];
+        const candX: number[] = [0, canvasW];
+        const candY: number[] = [0, canvasH];
+        for (const o of canvas.getObjects()) {
+          if (o === target || !o.visible || selectionChildren.includes(o)) continue;
+          const ow = (o.width ?? 0) * (o.scaleX ?? 1);
+          const oh = (o.height ?? 0) * (o.scaleY ?? 1);
+          const oLeft = ((o as any).originX ?? "left") === "center" ? (o.left ?? 0) - ow / 2 : (o.left ?? 0);
+          const oTop = ((o as any).originY ?? "top") === "center" ? (o.top ?? 0) - oh / 2 : (o.top ?? 0);
+          candX.push(oLeft, oLeft + ow / 2, oLeft + ow);
+          candY.push(oTop, oTop + oh / 2, oTop + oh);
+        }
+
+        // Closest candidate within threshold per axis; snap by pure translation
+        // (origin-independent), draw a guide line at the matched position.
+        if (!snapV) {
+          let best: { delta: number; shift: number; pos: number } | null = null;
+          for (const cand of candX) {
+            for (const edge of xEdges) {
+              const delta = Math.abs(cand - edge);
+              if (delta < GUIDE_SNAP_THRESHOLD && (!best || delta < best.delta)) {
+                best = { delta, shift: cand - edge, pos: cand };
+              }
+            }
+          }
+          if (best) {
+            target.left = target.left! + best.shift;
+            lines.push({ axis: "v", pos: best.pos });
+          }
+        }
+        if (!snapH) {
+          let best: { delta: number; shift: number; pos: number } | null = null;
+          for (const cand of candY) {
+            for (const edge of yEdges) {
+              const delta = Math.abs(cand - edge);
+              if (delta < GUIDE_SNAP_THRESHOLD && (!best || delta < best.delta)) {
+                best = { delta, shift: cand - edge, pos: cand };
+              }
+            }
+          }
+          if (best) {
+            target.top = target.top! + best.shift;
+            lines.push({ axis: "h", pos: best.pos });
+          }
+        }
+      }
+
+      guidelinesRef.current = { vertical: snapV, horizontal: snapH, lines };
     }
 
     // ── Shift axis lock ──
@@ -261,7 +343,7 @@ export const useTwickCanvas = ({
 
   /** Clear guides + convert text scale to fontSize on release */
   const handleObjectMoved = (event: any) => {
-    guidelinesRef.current = { vertical: false, horizontal: false };
+    guidelinesRef.current = { vertical: false, horizontal: false, lines: [] };
 
     // Convert uniform scale to fontSize for text/caption elements
     const target = event?.target;
