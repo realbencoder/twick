@@ -197,6 +197,10 @@ export const useTwickCanvas = ({
       }
       ctx.stroke();
     }
+    // Fabric only clears the top context on the next renderAll when this flag is set —
+    // without it every drag frame's guide lines PILE UP into a trail (and the last set can
+    // stick after release if the drop position needs no canvas rebuild).
+    (canvas as unknown as { contextTopDirty?: boolean }).contextTopDirty = true;
     ctx.restore();
   };
 
