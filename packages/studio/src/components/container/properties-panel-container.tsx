@@ -1,6 +1,5 @@
 import { ElementProps } from "../properties/element-props";
 import { TextEffects } from "../properties/text-effects";
-import { Animation } from "../properties/animation";
 import {
   VideoElement,
   TextElement,
@@ -226,13 +225,14 @@ export function PropertiesPanelContainer({
                       />
                     )}
 
-                    {/* Animations – visual elements only (not audio) */}
-                    {!isAudio && (
-                      <Animation
-                        selectedElement={selectedElement}
-                        updateElement={updateElement}
-                      />
-                    )}
+                    {/* Animations panel REMOVED — the element fade/enter/exit animation
+                        props it wrote were a no-op: our WebCodecs editor preview has no
+                        time-based element animation, and the server render (all videos)
+                        never reads animation props. Configuring a Fade did nothing in
+                        preview OR output — a silent trap. Same rationale as the fork's
+                        removed generate-media/Effect/Shape tools. If real element fade
+                        in/out is ever wanted, wire it into BOTH playback-controller and
+                        render-worker/canvas-renderer.mjs, then restore this panel. */}
 
                     {/* Generate subtitles is handled by the host app's header button */}
                   </>
