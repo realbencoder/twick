@@ -19,6 +19,49 @@ export const DEFAULT_TEXT_PROPS = {
   shadowOpacity: 1.0,
 };
 
+/**
+ * Host-app bridge: when the embedding app sets
+ * `window.__twick_default_text_style` (e.g. a starred "text style" preset),
+ * NEW text elements seed from it instead of the hardcoded defaults. Read
+ * lazily at panel mount so a mid-session change applies to the next panel
+ * open. Visual, parity-safe props only (family/size/weight/fill/stroke/
+ * strokeWidth); unknown fonts fall back to the stock default so the font
+ * <select> never shows a value outside its option list.
+ */
+function resolveDefaultTextProps(): typeof DEFAULT_TEXT_PROPS {
+  if (typeof window === "undefined") return DEFAULT_TEXT_PROPS;
+  const preset = (window as unknown as {
+    __twick_default_text_style?: {
+      fontFamily?: unknown;
+      fontSize?: unknown;
+      fontWeight?: unknown;
+      fill?: unknown;
+      stroke?: unknown;
+      strokeWidth?: unknown;
+    } | null;
+  }).__twick_default_text_style;
+  if (!preset || typeof preset !== "object") return DEFAULT_TEXT_PROPS;
+  const knownFont =
+    typeof preset.fontFamily === "string" &&
+    (Object.values(AVAILABLE_TEXT_FONTS) as string[]).includes(preset.fontFamily);
+  return {
+    ...DEFAULT_TEXT_PROPS,
+    fontFamily: knownFont ? (preset.fontFamily as string) : DEFAULT_TEXT_PROPS.fontFamily,
+    fontSize:
+      typeof preset.fontSize === "number" && preset.fontSize > 0
+        ? preset.fontSize
+        : DEFAULT_TEXT_PROPS.fontSize,
+    fontWeight: preset.fontWeight === 700 ? 700 : DEFAULT_TEXT_PROPS.fontWeight,
+    textColor: typeof preset.fill === "string" ? preset.fill : DEFAULT_TEXT_PROPS.textColor,
+    strokeColor:
+      typeof preset.stroke === "string" ? preset.stroke : DEFAULT_TEXT_PROPS.strokeColor,
+    strokeWidth:
+      typeof preset.strokeWidth === "number" && preset.strokeWidth >= 0
+        ? preset.strokeWidth
+        : DEFAULT_TEXT_PROPS.strokeWidth,
+  };
+}
+
 export interface TextPanelState {
   textContent: string;
   fontSize: number;
@@ -63,16 +106,19 @@ export const useTextPanel = ({
   addElement: (element: TrackElement) => void;
   updateElement: (element: TrackElement) => void;
 }): TextPanelState & TextPanelActions => {
+  // Seeded ONCE at panel mount — the host default (when set) only shapes
+  // NEW text; selecting an existing element still syncs from its props below.
+  const [initialDefaults] = useState(resolveDefaultTextProps);
   const [textContent, setTextContent] = useState(DEFAULT_TEXT_PROPS.text);
-  const [fontSize, setFontSize] = useState(DEFAULT_TEXT_PROPS.fontSize);
-  const [selectedFont, setSelectedFont] = useState(DEFAULT_TEXT_PROPS.fontFamily);
-  const [isBold, setIsBold] = useState(DEFAULT_TEXT_PROPS.fontWeight === 700);
+  const [fontSize, setFontSize] = useState(initialDefaults.fontSize);
+  const [selectedFont, setSelectedFont] = useState(initialDefaults.fontFamily);
+  const [isBold, setIsBold] = useState(initialDefaults.fontWeight === 700);
   const [isItalic, setIsItalic] = useState(DEFAULT_TEXT_PROPS.fontStyle === "italic");
-  const [textColor, setTextColor] = useState(DEFAULT_TEXT_PROPS.textColor);
-  const [strokeColor, setStrokeColor] = useState(DEFAULT_TEXT_PROPS.strokeColor);
+  const [textColor, setTextColor] = useState(initialDefaults.textColor);
+  const [strokeColor, setStrokeColor] = useState(initialDefaults.strokeColor);
   const [applyShadow, setApplyShadow] = useState(DEFAULT_TEXT_PROPS.applyShadow);
   const [shadowColor, setShadowColor] = useState(DEFAULT_TEXT_PROPS.shadowColor);
-  const [strokeWidth, setStrokeWidth] = useState(DEFAULT_TEXT_PROPS.strokeWidth);
+  const [strokeWidth, setStrokeWidth] = useState(initialDefaults.strokeWidth);
   const [applyBackground, setApplyBackground] = useState(false);
   const [backgroundColor, setBackgroundColor] = useState("#FACC15");
   const [backgroundOpacity, setBackgroundOpacity] = useState(1);
