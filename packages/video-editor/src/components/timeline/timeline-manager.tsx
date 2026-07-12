@@ -16,6 +16,7 @@ import { TimelineTickConfig } from "../video-editor";
 import { ElementColors } from "../../helpers/types";
 import { PlayheadState } from "../track/seek-track";
 import { createElementFromDrop } from "../../hooks/use-timeline-drop";
+import { canDropElementOnTrack } from "../../helpers/editor.utils";
 
 const TimelineManager = ({
   trackZoom,
@@ -74,8 +75,15 @@ const TimelineManager = ({
       // finding 1). A track deleted mid-flight falls through to the insert-new-track branch.
       const liveTrack = track ? editor.getTrackById(track.getId()) ?? null : null;
 
+      // Type gate (same rule as cross-track element drops): new media must not land on an
+      // incompatible track — a stock clip released over the subtitle row would otherwise be
+      // ADDED TO THE CAPTION TRACK (and similarly onto the main recording track or a text
+      // lane). Incompatible target → fall through to the insert-new-track branch below.
+      const compatibleTrack =
+        liveTrack && canDropElementOnTrack(element, liveTrack) ? liveTrack : null;
+
       // If no target track, insert above video (after caption track)
-      let targetTrack = liveTrack;
+      let targetTrack = compatibleTrack;
       if (!targetTrack) {
         const _tlTracks = editor.getTimelineData()?.tracks || [];
         const _tlCaptionIdx = _tlTracks.findIndex((t2: any) => t2.getType() === TRACK_TYPES.CAPTION);

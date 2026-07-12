@@ -17,6 +17,7 @@ import { CaptionPropPanel } from "../properties/caption-prop";
 import { PlaybackPropsPanel } from "../properties/playback-props";
 import { TextPropsPanel } from "../properties/text-props";
 import { AnnotationStylePanel } from "../properties/annotation-style-panel";
+import { HostPanelExtra } from "./host-panel-extra";
 import { useCallback } from "react";
 
 const DEFAULT_CANVAS_BACKGROUND = "#000000";
@@ -162,6 +163,8 @@ export function PropertiesPanelContainer({
                 selectedElement={selectedElement}
                 updateElement={updateElement}
               />
+              {/* Host-app slot (e.g. saved subtitle style presets) */}
+              <HostPanelExtra kind="caption" />
             </>
           )}
 
@@ -224,6 +227,9 @@ export function PropertiesPanelContainer({
                         updateElement={updateElement}
                       />
                     )}
+
+                    {/* Host-app slot (e.g. saved text style presets) – text only */}
+                    {isText && <HostPanelExtra kind="text" />}
 
                     {/* Animations panel REMOVED — the element fade/enter/exit animation
                         props it wrote were a no-op: our WebCodecs editor preview has no

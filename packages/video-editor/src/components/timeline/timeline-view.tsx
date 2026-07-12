@@ -223,6 +223,18 @@ function TimelineView({
     return { selectedTrackElement: selectedItem };
   }, [selectedItem]);
 
+  // While dragging a CAPTION, suppress the separator drop-zone highlight — captions are
+  // track-locked (see the pin in handleDragWithDrop), so the highlight would advertise a
+  // drop that will never happen.
+  const draggingCaption = useMemo(() => {
+    if (!draggingElementId) return false;
+    for (const t of tracks || []) {
+      const el = t.getElements().find((e) => e.getId() === draggingElementId);
+      if (el) return el.getType().toLowerCase() === "caption";
+    }
+    return false;
+  }, [draggingElementId, tracks]);
+
   const handleDragWithDrop = useCallback(
     (payload: TrackElementDragPayload, dropPointer?: { clientX: number; clientY: number }) => {
       // ── EXCLUSIVE main-track MOVE routing (drag-to-reorder). Goes FIRST, before every
@@ -247,6 +259,17 @@ function TimelineView({
           return;
         }
       }
+      // ── CAPTION TRACK-LOCK: captions are time-pinned to THEIR caption track. A release is
+      // ALWAYS committed as a same-track drag (horizontal/time component only) no matter where
+      // the pointer let go — cross-track routing is by release coordinate, so without this pin
+      // an accidental vertical flick would send a subtitle to another track and silently strip
+      // its caption semantics. Belt in onElementDrop covers the same rule at the mutation
+      // choke point (drop logic is split across the two layers).
+      if (payload.element.getType().toLowerCase() === "caption") {
+        onElementDrag(payload);
+        return;
+      }
+
       // No drop pointer or no drop handler – treat as a simple drag (update s/e on same track).
       if (!dropPointer || !onElementDrop) {
         onElementDrag(payload);
@@ -673,7 +696,9 @@ function TimelineView({
             style={{
               height: SEPARATOR_HEIGHT,
               background:
-                activeDropTarget?.type === "separator" && activeDropTarget.separatorIndex === 0
+                activeDropTarget?.type === "separator" &&
+                activeDropTarget.separatorIndex === 0 &&
+                !draggingCaption
                   ? "rgba(255,255,255,0.2)"
                   : "transparent",
             }}
@@ -712,7 +737,9 @@ function TimelineView({
                 style={{
                   height: SEPARATOR_HEIGHT,
                   background:
-                    activeDropTarget?.type === "separator" && activeDropTarget.separatorIndex === index + 1
+                    activeDropTarget?.type === "separator" &&
+                    activeDropTarget.separatorIndex === index + 1 &&
+                    !draggingCaption
                       ? "rgba(255,255,255,0.2)"
                       : "transparent",
                 }}

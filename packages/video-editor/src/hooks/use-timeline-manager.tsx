@@ -1,5 +1,5 @@
 import { useLivePlayerContext } from "@twick/live-player";
-import { isMainVideoTrack } from "../helpers/editor.utils";
+import { canDropElementOnTrack, isMainVideoTrack } from "../helpers/editor.utils";
 import {
   TrackElement,
   Track,
@@ -283,19 +283,34 @@ export const useTimelineManager = (): TimelineManagerReturn => {
     }
   };
 
-  /** Cross-track drop is only allowed when track type is element (not video/audio). */
-  const isElementTrackType = (track: Track): boolean =>
-    track.getType() === TRACK_TYPES.ELEMENT;
-
-  /** Only allow separator drop when the new track would be element type (text, caption, shapes, etc.). */
+  /**
+   * Only allow separator drop (new track) when the element may leave its track at all.
+   * Captions are excluded: they are time-pinned to THEIR caption track — a separator drop
+   * would strand them on a generic 'element' track and silently strip caption semantics
+   * (ripple caption guards, styling tools, the host app's subtitle pipeline).
+   */
   const wouldBeElementTrack = (el: TrackElement): boolean => {
     const elType = el.getType().toLowerCase();
-    return elType !== "video" && elType !== "image" && elType !== "audio";
+    return (
+      elType !== "video" &&
+      elType !== "image" &&
+      elType !== "audio" &&
+      elType !== "caption"
+    );
   };
 
   const onElementDrop = async (params: ElementDropParams): Promise<void> => {
     const { element, dragType, updates, dropTarget } = params;
     const tracks = editor.getTimelineData()?.tracks ?? [];
+
+    // Rejected cross-track drops MUST NOT silently return: the clip's local drag position has
+    // already moved horizontally, and nothing would snap it back (element start/end unchanged →
+    // TrackElementView never re-syncs → clip stays visually displaced until an unrelated
+    // re-render). Committing the drag as a same-track move keeps the UI truthful: the vertical
+    // component is ignored, the horizontal (time) component applies on the element's own track.
+    const fallBackToSameTrackMove = () => {
+      onElementDrag({ element, dragType, updates });
+    };
 
     if (!dropTarget) {
       return;
@@ -303,6 +318,7 @@ export const useTimelineManager = (): TimelineManagerReturn => {
 
     if (dropTarget.type === "separator") {
       if (!wouldBeElementTrack(element)) {
+        fallBackToSameTrackMove();
         return;
       }
       await editor.moveElementToNewTrackAt(
@@ -317,10 +333,12 @@ export const useTimelineManager = (): TimelineManagerReturn => {
 
     const targetTrack = tracks[dropTarget.trackIndex];
     if (!targetTrack) {
+      fallBackToSameTrackMove();
       return;
     }
 
-    if (!isElementTrackType(targetTrack)) {
+    if (!canDropElementOnTrack(element, targetTrack)) {
+      fallBackToSameTrackMove();
       return;
     }
 
