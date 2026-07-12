@@ -312,6 +312,17 @@ export const useTimelineManager = (): TimelineManagerReturn => {
       onElementDrag({ element, dragType, updates });
     };
 
+    // A trim is NEVER a cross-track intent — the handles keep dragType START/END precisely so
+    // the edge-drag source-offset math runs (setStartAt etc. lives on the onElementDrag path
+    // only). Routing is by release coordinate, so without this belt an END-trim released with
+    // the pointer drifted onto a compatible lane would remove+re-add the clip cross-track:
+    // wrong source slice on START trims, and a main-track clip ripped out of the recording
+    // (the main-track pin covers MOVE only). Audit 2026-07-12 finding 1.
+    if (dragType === DRAG_TYPE.START || dragType === DRAG_TYPE.END) {
+      fallBackToSameTrackMove();
+      return;
+    }
+
     if (!dropTarget) {
       return;
     }

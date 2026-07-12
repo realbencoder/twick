@@ -30,16 +30,20 @@ export const isMainVideoTrack = (track?: unknown): boolean =>
  * - The MAIN recording track is reorder-only (magnetic, contiguous by construction) — nothing
  *   may be dropped INTO it.
  * - Caption-type tracks hold only captions; nothing may be dropped ONTO them.
- * - Typed tracks (video/audio) accept only their own kind (video tracks also accept images —
- *   the engine's own element→track map in moveElementToNewTrackAt treats them as one lane kind).
+ * - Typed tracks (video/audio) accept only their own LANE KIND — video and image count as one
+ *   visual kind, matching the engine's own element→track map in moveElementToNewTrackAt.
  * - Generic 'element' tracks (the default for panel/OS-drop-created tracks) are judged by
- *   CONTENT: the dragged element's type must match the elements already on the track (a text
- *   overlay can't land on a B-roll lane and vice versa). An EMPTY element track accepts any
- *   non-caption element.
+ *   CONTENT, also lane-kind-aware: the dragged element's kind must match the elements already
+ *   on the track (a text overlay can't land on a B-roll lane and vice versa; an image CAN
+ *   join a B-roll video lane — they are the same visual kind). An EMPTY element track accepts
+ *   any non-caption element.
  *
  * Callers must fall back to a same-track move (not a silent return) when this rejects, so the
  * clip never stays visually displaced from its committed position.
  */
+const laneKind = (elType: string): string =>
+  elType === "video" || elType === "image" ? "visual" : elType;
+
 export const canDropElementOnTrack = (
   element: TrackElement,
   targetTrack: Track
@@ -49,12 +53,12 @@ export const canDropElementOnTrack = (
   if (isMainVideoTrack(targetTrack)) return false;
   const trackType = targetTrack.getType();
   if (trackType === TRACK_TYPES.CAPTION || trackType === TRACK_TYPES.SCENE) return false;
-  if (trackType === TRACK_TYPES.VIDEO && elType !== "video" && elType !== "image") return false;
+  if (trackType === TRACK_TYPES.VIDEO && laneKind(elType) !== "visual") return false;
   if (trackType === TRACK_TYPES.AUDIO && elType !== "audio") return false;
   const existing = targetTrack.getElements();
   if (
     existing.length > 0 &&
-    existing.some((el) => el.getType().toLowerCase() !== elType)
+    existing.some((el) => laneKind(el.getType().toLowerCase()) !== laneKind(elType))
   ) {
     return false;
   }

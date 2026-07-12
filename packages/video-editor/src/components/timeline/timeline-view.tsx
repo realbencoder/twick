@@ -270,6 +270,14 @@ function TimelineView({
         return;
       }
 
+      // ── TRIM PIN: a START/END release is an edge drag, never a cross-track intent — route
+      // straight to the same-track commit regardless of where the pointer let go. Belt for
+      // the same rule at the top of onElementDrop.
+      if (payload.dragType === DRAG_TYPE.START || payload.dragType === DRAG_TYPE.END) {
+        onElementDrag(payload);
+        return;
+      }
+
       // No drop pointer or no drop handler – treat as a simple drag (update s/e on same track).
       if (!dropPointer || !onElementDrop) {
         onElementDrag(payload);

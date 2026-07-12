@@ -1,10 +1,12 @@
 import { useCallback, useState } from "react";
 import {
   Track,
+  TRACK_TYPES,
   VideoElement,
   AudioElement,
   ImageElement,
 } from "@twick/timeline";
+import { isMainVideoTrack } from "../helpers/editor.utils";
 import { getAssetTypeFromFile, DroppableAssetType } from "../helpers/asset-type";
 import { TIMELINE_DROP_MEDIA_TYPE } from "../helpers/constants";
 import { createTimeScale } from "../helpers/time-scale";
@@ -104,7 +106,20 @@ export function useTimelineDrop({
       const pos = computePosition(e.clientX, e.clientY);
       if (pos) {
         const track = tracks[pos.trackIndex] ?? null;
-        if (track || tracks.length === 0) {
+        // Never advertise a landing spot the drop gate always rejects: the asset type is
+        // unreadable during dragover (HTML5 keeps dataTransfer contents drop-only), but the
+        // main recording track and caption/scene tracks reject EVERY new-media type
+        // (canDropElementOnTrack in handleDropOnTimeline re-routes to a fresh track), so a
+        // preview rectangle on those rows would promise a drop that will not happen there —
+        // same principle as the caption separator-highlight suppression.
+        const alwaysRejects =
+          track != null &&
+          (isMainVideoTrack(track) ||
+            track.getType() === TRACK_TYPES.CAPTION ||
+            track.getType() === TRACK_TYPES.SCENE);
+        if (alwaysRejects) {
+          setPreview(null);
+        } else if (track || tracks.length === 0) {
           setPreview({
             trackIndex: pos.trackIndex,
             timeSec: pos.timeSec,
