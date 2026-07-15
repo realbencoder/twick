@@ -304,28 +304,44 @@ export const TrackElementView = memo(({
     const canvas = filmstripCanvasRef.current;
     if (!canvas) return;
     let cancelled = false;
-    const draw = () => {
+    // COALESCED redraw. A full-length clip's filmstrip samples from ~ALL of a video's storyboard
+    // sheets at once; on slow wifi they arrive one at a time and each arrival fires this "a sheet
+    // decoded → redraw" callback. It MUST be a single STABLE ref: filmstrip-render's per-sheet waiter
+    // Set dedups a stable ref, so a redraw re-subscribing to the still-loading sheets is a no-op.
+    // Passing a fresh `() => draw()` per redraw (the old code) instead accumulated a new callback on
+    // every still-loading sheet, so each sheet-load re-fired every prior callback → redraws doubled
+    // 1,2,4,8,… → the main thread froze the instant you opened a storyboard video on slow wifi. The
+    // rAF also coalesces a burst of near-simultaneous sheet-loads into one repaint. (Verified by
+    // helpers/filmstrip-cascade.test.ts: 4096 redraws → 21.)
+    let rafId = 0;
+    const scheduleRedraw = () => {
+      if (cancelled || rafId) return;
+      rafId = requestAnimationFrame(() => { rafId = 0; draw(); });
+    };
+    function draw(): boolean {
       if (cancelled) return false;
       const meta = getFilmstripMeta();
       if (!meta) return false;
-      const widthPx = canvas.clientWidth;
-      const heightPx = canvas.clientHeight;
+      const widthPx = canvas!.clientWidth;
+      const heightPx = canvas!.clientHeight;
       if (widthPx <= 0 || heightPx <= 0) return false;
       const span = Math.max(0, position.end - position.start);
       const dpr = Math.min(2, (typeof window !== "undefined" && window.devicePixelRatio) || 1);
       drawClipFilmstrip(
-        canvas,
+        canvas!,
         meta,
         { sourceStart: wfSrcTime, span, playbackRate: wfRate, widthPx, heightPx, dpr },
-        () => { if (!cancelled) draw(); } // a sheet finished decoding → redraw with it
+        scheduleRedraw // STABLE ref → deduped by ensureSheet; rAF coalesces bursts. NEVER a fresh closure.
       );
       return true;
-    };
-    if (draw()) return () => { cancelled = true; };
+    }
+    const drewNow = draw();
     const onReady = () => { draw(); };
-    window.addEventListener("twick-filmstrip-ready", onReady);
+    // Only listen for late registration if the first paint couldn't draw yet (filmstrip not registered).
+    if (!drewNow) window.addEventListener("twick-filmstrip-ready", onReady);
     return () => {
       cancelled = true;
+      if (rafId) cancelAnimationFrame(rafId);
       window.removeEventListener("twick-filmstrip-ready", onReady);
     };
   }, [showFilmstrip, element.getId(), position.start, position.end, wfSrcTime, wfRate, parentWidth, duration]);
