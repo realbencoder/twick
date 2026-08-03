@@ -272,11 +272,21 @@ export const TrackElementView = memo(({
       const wf = getTimelineWaveform();
       if (!wf) return false;
       const srcSpan = Math.max(0, (position.end - position.start) * wfRate);
+      // LIVE source start during an in-flight START trim: the commit advances props.time only on
+      // release, so drawing from the committed offset showed audio `delta` seconds EARLIER than
+      // what plays at each pixel — the silence the user aimed at migrated under the cursor and the
+      // release landed on speech (audit 2026-08-03, T3). Head-trim keeps on-screen content
+      // anchored, so the live window is [time + delta, …]: bars crop from the LEFT. Delta is 0 at
+      // rest/after commit (position === element), and MOVE/END drags don't shift the source.
+      const liveTrimDelta =
+        dragType.current === DRAG_TYPE.START
+          ? (position.start - element.getStart()) * wfRate
+          : 0;
       // Cap DPR at 2 — retina-crisp without 3x-display overdraw on a long timeline of clips.
       const dpr = Math.min(2, (typeof window !== "undefined" && window.devicePixelRatio) || 1);
       return drawClipWaveform(canvas, wf, {
         gain: wfVolume,
-        srcStart: wfSrcTime,
+        srcStart: Math.max(0, wfSrcTime + liveTrimDelta),
         srcSpan,
         cssWidth: canvas.clientWidth,
         cssHeight: canvas.clientHeight,
@@ -326,11 +336,17 @@ export const TrackElementView = memo(({
       const heightPx = canvas!.clientHeight;
       if (widthPx <= 0 || heightPx <= 0) return false;
       const span = Math.max(0, position.end - position.start);
+      // Same live head-trim offset as the waveform (audit T3) — frames crop from the LEFT during
+      // an in-flight START drag instead of sliding under the cursor.
+      const liveTrimDelta =
+        dragType.current === DRAG_TYPE.START
+          ? (position.start - element.getStart()) * wfRate
+          : 0;
       const dpr = Math.min(2, (typeof window !== "undefined" && window.devicePixelRatio) || 1);
       drawClipFilmstrip(
         canvas!,
         meta,
-        { sourceStart: wfSrcTime, span, playbackRate: wfRate, widthPx, heightPx, dpr },
+        { sourceStart: Math.max(0, wfSrcTime + liveTrimDelta), span, playbackRate: wfRate, widthPx, heightPx, dpr },
         scheduleRedraw // STABLE ref → deduped by ensureSheet; rAF coalesces bursts. NEVER a fresh closure.
       );
       return true;
@@ -355,9 +371,11 @@ export const TrackElementView = memo(({
     return snapTime(t, targets, thresholdSec).time;
   };
 
-  const bind = useDrag(({ delta: [dx], event }) => {
+  const rawMoveRef = useRef<number | null>(null);
+  const bind = useDrag(({ delta: [dx], event, first }) => {
     if (locked) return; // locked track — clips can't be moved
     if (!parentWidth) return;
+    if (first) rawMoveRef.current = null;
     if (dx == 0) return;
     // Don't start a move if user is dragging a handle
     if (dragType.current === DRAG_TYPE.START || dragType.current === DRAG_TYPE.END) return;
@@ -387,7 +405,9 @@ export const TrackElementView = memo(({
     setPosition((prev) => {
       const span = prev.end - prev.start;
       if (span <= 0) return prev; // Prevent degenerate state
-      let newStart = prev.start + (dx / parentWidth) * duration;
+      // RAW accumulator (see rawEdgeRef above): advance from the unsnapped position so the clip
+      // can escape a snap target with a slow drag instead of being re-absorbed every event.
+      let newStart = (rawMoveRef.current ?? prev.start) + (dx / parentWidth) * duration;
       newStart = Math.max(0, newStart);
       if (!allowOverlap) {
         if (prevEnd !== null && newStart < prevEnd) {
@@ -397,6 +417,7 @@ export const TrackElementView = memo(({
           newStart = nextStart - span;
         }
       }
+      rawMoveRef.current = newStart;
       // MAGNETIC MAIN TRACK: main-recording clips are GLUED edge-to-edge (their position comes
       // from clip order, not free placement) until drag-to-REORDER ships. A free rightward MOVE
       // creates a displacement gap whose auto-close ripples caption/overlay tracks — silently
@@ -438,24 +459,36 @@ export const TrackElementView = memo(({
     });
   });
 
-  const bindStartHandle = useDrag(({ delta: [dx], event, last }) => {
+  // RAW (unsnapped) edge position for the in-flight trim gesture. Snapping must be display-only:
+  // the old code advanced from the PREVIOUSLY-SNAPPED position each move, so while the edge sat on
+  // a snap target every sub-threshold delta was re-absorbed back to the target — a slow careful
+  // drag never escaped, and only a single-event flick (>10px between two pointer events) could move
+  // the handle at all (audit 2026-08-03, T1: "trim only works over 5-10 seconds"). The raw value
+  // keeps accumulating under the snap, so the handle escapes the moment the pointer genuinely
+  // leaves the capture radius. Reset per gesture via `first`.
+  const rawEdgeRef = useRef<number | null>(null);
+
+  const bindStartHandle = useDrag(({ delta: [dx], event, first, last }) => {
     if (locked) return; // locked track — clips can't be trimmed
     if (event) {
       event.stopPropagation();
     }
+    if (first) rawEdgeRef.current = null;
     if (dx === 0 && !last) return;
     dragType.current = DRAG_TYPE.START;
-    if (last) return; // Keep dragType as START so sendUpdate adjusts startAt
+    if (last) { rawEdgeRef.current = null; return; } // Keep dragType as START so sendUpdate adjusts startAt
     const snapTargets = getSnapTargets?.(element.getId()) ?? [];
     setPosition((prev) => {
-      let newStart = prev.start + (dx / parentWidth) * duration;
-      newStart = Math.max(0, Math.min(newStart, prev.end - MIN_DURATION));
-      if (prevEnd !== null && !allowOverlap && newStart < prevEnd) {
-        newStart = prevEnd;
+      let raw = (rawEdgeRef.current ?? prev.start) + (dx / parentWidth) * duration;
+      raw = Math.max(0, Math.min(raw, prev.end - MIN_DURATION));
+      if (prevEnd !== null && !allowOverlap && raw < prevEnd) {
+        raw = prevEnd;
       }
-      // Snap the leading edge, then re-honor the same clamps.
+      rawEdgeRef.current = raw;
+      let newStart = raw;
+      // Snap the leading edge for DISPLAY, then re-honor the same clamps.
       if (snapTargets.length) {
-        let snapped = snapEdgeTime(newStart, snapTargets);
+        let snapped = snapEdgeTime(raw, snapTargets);
         snapped = Math.max(0, Math.min(snapped, prev.end - MIN_DURATION));
         if (prevEnd !== null && !allowOverlap && snapped < prevEnd) snapped = prevEnd;
         newStart = snapped;
@@ -467,28 +500,31 @@ export const TrackElementView = memo(({
     });
   });
 
-  const bindEndHandle = useDrag(({ delta: [dx], event, last }) => {
+  const bindEndHandle = useDrag(({ delta: [dx], event, first, last }) => {
     if (locked) return; // locked track — clips can't be trimmed
     if (event) {
       event.stopPropagation();
     }
+    if (first) rawEdgeRef.current = null;
     if (dx === 0 && !last) return;
     dragType.current = DRAG_TYPE.END;
-    if (last) return; // Keep dragType as END so sendUpdate knows it was an edge drag
+    if (last) { rawEdgeRef.current = null; return; } // Keep dragType as END so sendUpdate knows it was an edge drag
     const snapTargets = getSnapTargets?.(element.getId()) ?? [];
     setPosition((prev) => {
-      let newEnd = prev.end + (dx / parentWidth) * duration;
-      newEnd = Math.max(newEnd, prev.start + MIN_DURATION);
+      let raw = (rawEdgeRef.current ?? prev.end) + (dx / parentWidth) * duration;
+      raw = Math.max(raw, prev.start + MIN_DURATION);
       // Note: end clamping for overlays is handled in onElementDrag (useTimelineManager)
       // where editor context is available to check track type.
       if (!allowOverlap) {
-        if (nextStart !== null && newEnd > nextStart) {
-          newEnd = nextStart;
+        if (nextStart !== null && raw > nextStart) {
+          raw = nextStart;
         }
       }
-      // Snap the trailing edge, then re-honor the same clamps.
+      rawEdgeRef.current = raw;
+      let newEnd = raw;
+      // Snap the trailing edge for DISPLAY, then re-honor the same clamps.
       if (snapTargets.length) {
-        let snapped = snapEdgeTime(newEnd, snapTargets);
+        let snapped = snapEdgeTime(raw, snapTargets);
         snapped = Math.max(snapped, prev.start + MIN_DURATION);
         if (!allowOverlap && nextStart !== null && snapped > nextStart) snapped = nextStart;
         newEnd = snapped;
@@ -521,19 +557,33 @@ export const TrackElementView = memo(({
     }
     setIsDragging(false);
     onDragStateChange?.(false, element);
-    const payload: TrackElementDragPayload = {
-      element,
-      updates: {
-        start: getDecimalNumber(position.start),
-        end: getDecimalNumber(position.end),
-      },
-      dragType: dragType.current || "",
-    };
-    const didChange =
-      lastPosRef.current?.start !== position.start ||
-      lastPosRef.current?.end !== position.end;
-    if (didChange || dropPointer) {
-      onDrag(payload, dropPointer);
+    // Only a REAL gesture commits. A plain selection click used to fall through here with a
+    // virgin/stale dragType and `didChange || dropPointer` always true (dropPointer exists for
+    // every mouse event, and lastPosRef was rarely seeded because clicks land on inner children),
+    // silently rewriting the element with toFixed(3)-ROUNDED s/e on EVERY click — the drift
+    // injector behind "deleted clip's gap won't close" plus a spurious history/autosave churn per
+    // click (audit 2026-08-03, R2). dragType is only ever set by actual useDrag movement, so it is
+    // the ground truth for "did a drag happen since the last commit".
+    const gesture = dragType.current;
+    dragType.current = null; // reset per gesture — a stale START/END must not replay on a click
+    if (gesture) {
+      // Round only the edge(s) the user actually authored in this gesture; re-writing the OTHER
+      // edge rounded nudged exact engine floats by ±0.5ms per commit (same drift injector).
+      const payload: TrackElementDragPayload = {
+        element,
+        updates: {
+          start: gesture === DRAG_TYPE.END ? position.start : getDecimalNumber(position.start),
+          end: gesture === DRAG_TYPE.START ? position.end : getDecimalNumber(position.end),
+        },
+        dragType: gesture,
+      };
+      const didChange =
+        lastPosRef.current === null ||
+        lastPosRef.current.start !== position.start ||
+        lastPosRef.current.end !== position.end;
+      if (didChange || dropPointer) {
+        onDrag(payload, dropPointer);
+      }
     }
     // AFTER onDrag: the view's routing guard + onMainReorder run synchronously inside it and
     // need the view-side reorder state alive; settle only once the drop has been consumed.
@@ -618,15 +668,14 @@ export const TrackElementView = memo(({
         ? "twick-track-element-selected"
         : "twick-track-element-default"
     } ${isDragging ? "twick-track-element-dragging" : ""} ${isReordering ? "twick-track-element-reordering" : ""} ${locked ? "twick-track-element-locked" : ""}`,
-    onMouseDown: (e) => {
-      if (e.target === ref.current) {
-        setLastPos();
-      }
+    // Seed the gesture-start position UNCONDITIONALLY. The old `e.target === ref.current` gate
+    // almost never passed (pointer-downs land on the inner bind() div / handle children), leaving
+    // lastPosRef null and `didChange` vacuously true on every release (audit 2026-08-03, R2).
+    onMouseDown: () => {
+      setLastPos();
     },
     onTouchStart: (e) => {
-      if (e.target === ref.current) {
-        setLastPos();
-      }
+      setLastPos();
       // Never arm the long-press on a trim handle: handle drags bypass the MOVE branch, so
       // accumDx stays 0 and a slow trim would false-fire the lift at 250ms.
       const onHandle = !!(e.target as HTMLElement)?.closest?.(".twick-track-element-handle");

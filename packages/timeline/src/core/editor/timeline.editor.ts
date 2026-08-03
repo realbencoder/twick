@@ -154,6 +154,7 @@ export class TimelineEditor {
     metadata,
     updatePlayerData,
     forceUpdate,
+    skipHistory,
   }: {
     tracks: Track[];
     version?: number;
@@ -162,6 +163,8 @@ export class TimelineEditor {
     watermark?: Watermark;
     backgroundColor?: string;
     metadata?: ProjectMetadata;
+    /** Re-render/notify without pushing an undo snapshot (refresh-as-re-render, previews). */
+    skipHistory?: boolean;
   }) {
     const prevTimelineData = this.getTimelineData();
     const updatedVersion = version ?? (prevTimelineData?.version || 0) + 1;
@@ -180,7 +183,7 @@ export class TimelineEditor {
       this.context.contextId,
       updatedTimelineData
     );
-    this.updateHistory(updatedTimelineData);
+    this.updateHistory(updatedTimelineData, skipHistory);
     this.context.updateChangeLog();
     if (updatePlayerData) {
       // Send serialized tracks (TrackJSON[]) so live-player/visualizer get proper JSON with z-ordered elements
@@ -257,7 +260,7 @@ export class TimelineEditor {
       ...currentProps,
       ...propsPatch,
     });
-    this.refresh();
+    this.commitRefresh();
     return track;
   }
 
@@ -267,7 +270,7 @@ export class TimelineEditor {
       return null;
     }
     track.setProps(nextProps);
-    this.refresh();
+    this.commitRefresh();
     return track;
   }
 
@@ -287,7 +290,7 @@ export class TimelineEditor {
         if (input.props !== undefined) {
           existing.setProps(input.props);
         }
-        this.refresh();
+        this.commitRefresh();
         return existing;
       }
     }
@@ -299,7 +302,7 @@ export class TimelineEditor {
     if (input.props !== undefined) {
       created.setProps(input.props);
     }
-    this.refresh();
+    this.commitRefresh();
     return created;
   }
 
@@ -350,9 +353,25 @@ export class TimelineEditor {
   }
 
   /**
-   * Refresh the timeline data
+   * Refresh the timeline data — re-render/notify ONLY, no undo snapshot. The UI layer calls this
+   * after nearly every mutation as a re-render trigger; when it also snapshotted, every standard
+   * gesture produced 2-3 undo entries (some capturing identical intermediate states) and a single
+   * slider drag flooded the whole history cap (audit 2026-08-03, U1/U2). Mutations that use a
+   * refresh as their SOLE commit must call commitRefresh() instead.
    */
   refresh(): void {
+    const currentData = this.getTimelineData();
+    if (currentData) {
+      this.setTimelineData({ tracks: currentData.tracks, updatePlayerData: true, forceUpdate: true, skipHistory: true });
+    }
+  }
+
+  /**
+   * Commit the current (already-mutated) tracks as ONE undo snapshot + re-render. For call sites
+   * whose mutation happened via direct track/element setters (track props, friend mutations) where
+   * refresh() used to double as the commit.
+   */
+  commitRefresh(): void {
     const currentData = this.getTimelineData();
     if (currentData) {
       this.setTimelineData({ tracks: currentData.tracks, updatePlayerData: true, forceUpdate: true });
@@ -474,6 +493,12 @@ export class TimelineEditor {
 
     const currentData = this.getTimelineData();
     if (currentData) {
+      // Boundary comparisons are epsilon-tolerant (same EPS as closeVideoTrackGaps): the drag/click
+      // commit pipeline rounds s/e to 3 decimals (getDecimalNumber) while engine ops (split) write
+      // exact floats, so a neighbor can sit up to ~0.5ms on the "wrong" side of gapEnd. A strict
+      // `>=` skipped that neighbor entirely — the deleted clip's gap stayed open (black dead-space)
+      // while captions and later clips shifted, desyncing subtitles (audit 2026-08-03, R1/R2).
+      const EPS = 5e-3;
       for (const track of currentData.tracks) {
         const isSameTrack = track.getId() === elementTrackId;
         const isCaptionTrack = track.getType() === TRACK_TYPES.CAPTION;
@@ -493,19 +518,21 @@ export class TimelineEditor {
           // word into the smaller window (losing/mangling the real words when a mistimed caption
           // straddled a cut — e.g. cutting dead-space at the start). Captions entirely BEFORE the
           // cut fall through unchanged; entirely AFTER, they shift below (the existing path) — both
-          // left exactly as they were.
-          if (isCaptionTrack && isVideoTrack && elStart < gapEnd && elEnd > gapStart) {
+          // left exactly as they were. EPS keeps a boundary-kissing caption out of the word-cut.
+          if (isCaptionTrack && isVideoTrack && elStart < gapEnd - EPS && elEnd > gapStart + EPS) {
             const { survived } = this.applyCutToCaption(el, gapStart, gapEnd);
             if (!survived) elementsToRemove.push(el);
             continue;
           }
-          // Element starts after the gap — shift left to close it. Skip for a caption-on-caption
-          // delete: captions stay pinned to the audio (leave a gap, like overlay tracks already do).
-          if (elStart >= gapEnd && !isCaptionElementDelete) {
+          // Element starts after the gap (within EPS) — shift left to close it. Clamp start at 0:
+          // a rounding-displaced neighbor can sit EPS before gapEnd, and a full shift would push it
+          // fractionally negative. Skip for a caption-on-caption delete: captions stay pinned to
+          // the audio (leave a gap, like overlay tracks already do).
+          if (elStart >= gapEnd - EPS && !isCaptionElementDelete) {
             const prevStart = el.getStart();
             const prevEnd = el.getEnd();
-            el.setStart(prevStart - gapDuration);
-            el.setEnd(prevEnd - gapDuration);
+            el.setStart(Math.max(0, prevStart - gapDuration));
+            el.setEnd(Math.max(el.getStart() + 0.01, prevEnd - gapDuration));
             this.adjustCaptionWordsForTimeChange(el, prevStart, prevEnd);
           }
         }
@@ -746,10 +773,11 @@ export class TimelineEditor {
     return true;
   }
 
-  updateHistory(timelineTrackData: TimelineTrackData): void {
+  updateHistory(timelineTrackData: TimelineTrackData, skipSnapshot?: boolean): void {
     const tracks = timelineTrackData.tracks.map((t) => t.serialize());
     this.totalDuration = getTotalDuration(tracks);
     this.context.setTotalDuration(this.totalDuration);
+    if (skipSnapshot) return;
     const version = timelineTrackData.version;
     this.context.setPresent({
       tracks,
@@ -1356,6 +1384,17 @@ export class TimelineEditor {
         const start = element.getStart();
         const end = element.getEnd();
 
+        // Captions get WORD-DROP semantics for every case (before/after/straddle/swallowed) via
+        // applyCutToCaption: words inside the cut are dropped, survivors keep their real timing.
+        // The generic branches below SQUEEZE all word timings into the shrunk window — that scale
+        // is what drifted subtitle timing after every manual range cut and Remove Silences run
+        // (audit 2026-08-03, S5).
+        if (element.getType().toLowerCase() === "caption") {
+          const { survived } = this.applyCutToCaption(element, fromTime, toTime);
+          if (!survived) friend.removeElement(element);
+          continue;
+        }
+
         if (end <= fromTime) {
           continue;
         }
@@ -1607,7 +1646,15 @@ export class TimelineEditor {
     const cutBound = (t: number): number =>
       t <= gapStart ? t : t >= gapEnd ? t - gapDuration : gapStart;
     let newStart = cutBound(origStart);
-    let newEnd = cutBound(origEnd);
+    const rawNewEnd = cutBound(origEnd);
+    // Caption effectively swallowed by the cut (window collapses to <20ms) — remove it. The old
+    // min-duration clamp turned every swallowed caption into a 10ms sliver PINNED at gapStart;
+    // multiple swallowed captions stacked on top of each other there ("fragments / subtitles
+    // colliding" — audit 2026-08-03 S6, sim-reproduced). The clamp below now only pads genuinely
+    // surviving content.
+    const overlappedGap = origEnd > gapStart && origStart < gapEnd;
+    if (overlappedGap && rawNewEnd - newStart < 0.02) return { survived: false };
+    let newEnd = rawNewEnd;
     if (newEnd < newStart + 0.01) newEnd = newStart + 0.01; // editor min-duration
 
     const props = element.getProps() ?? {};

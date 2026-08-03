@@ -1,7 +1,10 @@
 import { createContext, useContext, useState } from "react";
 import { ProjectJSON } from "../types";
 
-const MAX_HISTORY = 20;
+// 100 gestures of undo depth (industry norm; Premiere defaults 100). Was 20 — combined with the
+// old snapshot-per-refresh + per-slider-onChange behavior, a single slider drag evicted the whole
+// stack (audit 2026-08-03, U2). Push rate is now ~1 snapshot per completed gesture.
+const MAX_HISTORY = 100;
 
 // Helper function for deep cloning
 const deepClone = <T,>(obj: T): T => {

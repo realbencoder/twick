@@ -39,6 +39,16 @@ export default function SeekTrack({
   const ts = useTimeScale(zoom, duration);
   const totalWidth = ts.contentWidth;
 
+  // Zoom changes teleport the playhead's CONTENT-pixel position by (Δzoom × pxPerSec × time) —
+  // hundreds of px in one step — while the anchor-zoom effect snaps scrollLeft instantly in the
+  // same commit. With the 150ms transform transition active, the playhead was still mid-glide at
+  // its OLD pixel when the scroll snapped, so it visibly lurched across the screen on every zoom
+  // step ("jumps all over the place", audit 2026-08-03, Z1). Suppress the transition for any
+  // render where the zoom identity changed; the next currentTime render restores it.
+  const prevZoomRef = useRef(zoom);
+  const zoomJustChanged = prevZoomRef.current !== zoom;
+  prevZoomRef.current = zoom;
+
   // Calculate pin height based on number of timeline
   const pinHeight = 2 + timelineCount * (2.75 + 0.5); // 2.75rem height + 0.5rem margin per timeline
 
@@ -351,7 +361,7 @@ export default function SeekTrack({
             transform: `translateX(${seekPosition}px)`,
             top: 0,
             touchAction: "none",
-            transition: isDragging ? "none" : "transform 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+            transition: isDragging || zoomJustChanged ? "none" : "transform 150ms cubic-bezier(0.4, 0, 0.2, 1)",
             willChange: isDragging ? "transform" : "auto",
           }}
         >

@@ -7,6 +7,7 @@ import {
   VALIDATION_ERROR_CODE,
   ValidationError,
 } from "@twick/timeline";
+import { useEffect, useRef } from "react";
 
 /**
  * Custom hook for managing video editor operations.
@@ -120,10 +121,48 @@ export const useEditorManager = () => {
    * // Element is updated and editor is refreshed
    * ```
    */
-  const updateElement = (element: TrackElement) => {
-    const updatedElement = editor.updateElement(element);
+  // GESTURE-COALESCED commit. The properties-panel sliders (volume/opacity/scale/rotation/rate)
+  // call updateElement from onChange — dozens of events per thumb drag. Committing each one pushed
+  // 2 history entries per event and a single slider drag evicted the entire undo stack (audit
+  // 2026-08-03, U2). Now: PREVIEW instantly (element is already mutated by the panel — refresh()
+  // is history-free re-render + player update), and COMMIT once, 400ms after the last change per
+  // element (a new element flushes the previous one immediately, unmount flushes pending).
+  const pendingCommitRef = useRef<{ element: TrackElement; timer: ReturnType<typeof setTimeout> } | null>(null);
+
+  // NOTE: no setSelectedItem here — the deferred commit fires up to 400ms after the gesture and
+  // must never clobber a selection the user changed in the meantime (preview already selected).
+  const commitNow = (element: TrackElement) => {
+    editor.updateElement(element);
     editor.refresh();
-    setSelectedItem(updatedElement);
+  };
+
+  const flushPending = () => {
+    const pending = pendingCommitRef.current;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingCommitRef.current = null;
+    commitNow(pending.element);
+  };
+
+  useEffect(() => flushPending, []); // flush on unmount so a trailing edit is never history-less
+
+  const updateElement = (element: TrackElement) => {
+    const pending = pendingCommitRef.current;
+    if (pending && pending.element.getId() !== element.getId()) {
+      flushPending(); // switching elements mid-window — commit the previous gesture first
+    } else if (pending) {
+      clearTimeout(pending.timer);
+    }
+    // Instant preview: mutation already applied by the caller; re-render + player update only.
+    editor.refresh();
+    setSelectedItem(element);
+    pendingCommitRef.current = {
+      element,
+      timer: setTimeout(() => {
+        pendingCommitRef.current = null;
+        commitNow(element);
+      }, 400),
+    };
   };
 
   return {

@@ -8,6 +8,14 @@ export interface PlayheadScrollConfig {
   margin?: number;
   /** Width of the label/track-header area (left of seek track) in pixels */
   labelWidth?: number;
+  /**
+   * Timestamp (performance.now() base) before which follow-scroll must NOT write scrollLeft.
+   * The anchor-preserving zoom sets this right after it assigns the zoom-corrected scroll — the
+   * follow correction otherwise landed immediately after with one-commit-STALE playhead pixels,
+   * yanking the view a second time in the opposite direction on every zoom step (audit
+   * 2026-08-03, Z2).
+   */
+  suppressUntilRef?: React.RefObject<number>;
 }
 
 const DEFAULT_MARGIN = 80;
@@ -39,6 +47,9 @@ export function usePlayheadScroll(
     const contentX = labelWidth + playheadPositionPx;
 
     const scrollToKeepPlayheadVisible = () => {
+      // Anchor-zoom just wrote the authoritative scroll for this frame — stand down.
+      const suppressUntil = config?.suppressUntilRef?.current ?? 0;
+      if (suppressUntil && performance.now() < suppressUntil) return;
       const { scrollLeft, clientWidth, scrollWidth } = container;
       const maxScrollLeft = Math.max(0, scrollWidth - clientWidth);
       const minVisible = scrollLeft + margin;

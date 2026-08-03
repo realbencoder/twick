@@ -162,7 +162,11 @@ export const useTimelineManager = (): TimelineManagerReturn => {
         const _fileDur = _props.fileDuration;
         const _startAt = _props.time ?? _props.startAt ?? 0;
         if (_fileDur && _fileDur > 0) {
-          const maxEnd = updates.start + (_fileDur - _startAt);
+          // Remaining SOURCE seconds cover (fileDur - startAt) / rate TIMELINE seconds — a 2x clip
+          // was allowed to extend twice past its real content (frozen tail), a 0.5x clip was
+          // wrongly blocked at half its range (audit 2026-08-03, T4).
+          const _rate = Number(_props.playbackRate) || 1;
+          const maxEnd = updates.start + (_fileDur - _startAt) / _rate;
           if (clampedEnd > maxEnd) clampedEnd = maxEnd;
         }
       } else if (totalDuration > 0 && clampedEnd > totalDuration) {

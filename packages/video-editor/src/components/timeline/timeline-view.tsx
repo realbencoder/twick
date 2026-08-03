@@ -378,6 +378,8 @@ function TimelineView({
   // if the playhead is visible, it keeps its exact viewport position; if not, the time at the
   // viewport center stays at the center. Computed against the PREVIOUS zoom's scale.
   const prevZoomRef = useRef(zoomLevel);
+  // Zoom-frame authority handoff to usePlayheadScroll (see use-playhead-scroll.ts, audit Z2).
+  const followSuppressUntilRef = useRef(0);
   // Pre-zoom scroll truth: on zoom-OUT the content width shrinks in the SAME commit, so by the
   // time this effect reads container.scrollLeft the browser has already CLAMPED it to the new,
   // smaller max — computing the anchor from the clamped value threw the view backwards when
@@ -414,6 +416,9 @@ function TimelineView({
     if (seekContainerRef.current) {
       seekContainerRef.current.scrollLeft = newScroll;
     }
+    // The anchor is authoritative for this zoom frame — hold followPlayhead off until the
+    // playhead pixels published by SeekTrack have caught up with the new scale (audit Z2).
+    followSuppressUntilRef.current = performance.now() + 150;
   }, [zoomLevel, currentTime, duration]);
 
   // Sync scroll between seek container and timeline container
@@ -461,6 +466,7 @@ function TimelineView({
 
   usePlayheadScroll(containerRef, playheadPositionPx, isPlayheadActive, {
     labelWidth: LABEL_WIDTH,
+    suppressUntilRef: followSuppressUntilRef,
   });
 
   const { marquee, handleMouseDown: handleMarqueeMouseDown } =
