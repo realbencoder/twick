@@ -70,6 +70,10 @@ const useTimelineControl = () => {
 
     let removed = 0;
     let keptLocked = 0;
+    // ONE undo entry for the whole selection. Each removeTrack/rippleRemoveElement snapshots on its
+    // own, so deleting 5 clips wrote 5 entries — Cmd+Z then walked back through four intermediate
+    // states the creator never saw, and looked like "undo only removes one at a time".
+    editor.batchHistory(() => {
     for (const el of toDelete) {
       if (el instanceof Track) {
         // The MAIN recording track is not deletable. The track header is also the drag handle,
@@ -89,6 +93,7 @@ const useTimelineControl = () => {
         removed++;
       }
     }
+    });
     // A MIXED selection deletes what it can and keeps the locked ones — refusing the whole batch
     // would defeat the lock's main use (protecting the subtitle track WHILE you cut video). But it
     // must not be silent: say what was kept, and leave those items SELECTED so it is visible.

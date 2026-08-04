@@ -73,6 +73,16 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
    */
   async visitVideoElement(element: VideoElement): Promise<boolean> {
     if (!this.skipMetaUpdate) await element.updateVideoMeta();
+    // Mirror the probed source length into PROPS so the trim clamps still work after a reload.
+    // mediaDuration is a class field and does not serialize, so a stock B-roll clip lost its known
+    // length the moment the project was saved and reopened — and an unclamped end-drag then
+    // stretched a 5s clip to 60s of frozen frame (audit 2026-08-04, R2-23). Never overwrite an
+    // existing value: the app writes fileDuration for the main recording from a real probe.
+    const _probed = element.getMediaDuration?.();
+    const _props = element.getProps?.() as { fileDuration?: number } | undefined;
+    if (_props && typeof _probed === "number" && _probed > 0 && !_props.fileDuration) {
+      _props.fileDuration = _probed;
+    }
     const elements = this.track.getElements();
     const lastEndtime = elements?.length
       ? elements[elements.length - 1].getEnd()

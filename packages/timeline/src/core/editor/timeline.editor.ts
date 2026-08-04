@@ -77,6 +77,8 @@ export interface TrackOverlapIssue {
 export class TimelineEditor {
   private context: TimelineOperationContext;
   private totalDuration: number = 0;
+  /** >0 while inside batchHistory(); suppresses per-mutation undo snapshots. See batchHistory(). */
+  private historyBatchDepth: number = 0;
   private eventListeners = new Map<
     TimelineEditorEvent,
     Set<(payload: unknown) => void>
@@ -168,6 +170,9 @@ export class TimelineEditor {
   }) {
     const prevTimelineData = this.getTimelineData();
     const updatedVersion = version ?? (prevTimelineData?.version || 0) + 1;
+    // Inside a batchHistory() block every intermediate write is a re-render only — the block's
+    // single trailing commit is the sole undo snapshot (audit 2026-08-04, R2-22/R2-25).
+    if (this.historyBatchDepth > 0) skipHistory = true;
     const resolvedBackgroundColor =
       backgroundColor !== undefined ? backgroundColor : prevTimelineData?.backgroundColor;
     const resolvedMetadata =
@@ -364,6 +369,43 @@ export class TimelineEditor {
     if (currentData) {
       this.setTimelineData({ tracks: currentData.tracks, updatePlayerData: true, forceUpdate: true, skipHistory: true });
     }
+  }
+
+  /**
+   * Run a multi-mutation gesture as ONE undo entry.
+   *
+   * Every editor mutation commits its own snapshot, which is right for a single gesture and wrong
+   * for a compound one: deleting 5 selected clips wrote 5 snapshots (so undo had to be pressed 5
+   * times, landing on 4 intermediate states the creator never saw), and a video end-trim wrote its
+   * snapshot BEFORE the caption cleanup that follows it — leaving the recorded history and the
+   * live timeline holding different caption sets.
+   *
+   * Nesting is depth-counted, so a batched caller can safely invoke another batched method. The
+   * trailing commit fires only when the outermost block exits, and only if something actually
+   * changed. Errors still unwind the depth (finally), so one throw can't wedge history off.
+   *
+   * This is the same shape rippleDeleteRanges/closeVideoTrackGaps already use by hand (clone →
+   * mutate the clone N times → one setTimelineData); batchHistory generalizes it to call sites
+   * whose mutations run through the editor's own methods.
+   */
+  batchHistory<T>(fn: () => T): T {
+    const versionBefore = this.getTimelineData()?.version ?? -1;
+    this.historyBatchDepth++;
+    let result: T;
+    try {
+      result = fn();
+    } finally {
+      this.historyBatchDepth--;
+    }
+    if (this.historyBatchDepth === 0) {
+      const after = this.getTimelineData();
+      // No-op gestures (every item refused — e.g. an all-locked selection) must not push an
+      // undo entry; a snapshot identical to its predecessor is a dead Cmd+Z press.
+      if (after && after.version !== versionBefore) {
+        this.setTimelineData({ tracks: after.tracks, updatePlayerData: true, forceUpdate: true });
+      }
+    }
+    return result;
   }
 
   /**

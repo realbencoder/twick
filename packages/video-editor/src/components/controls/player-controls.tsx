@@ -150,6 +150,13 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
   // the affordance tells the truth (disabled + "move playhead over the clip" tooltip).
   const canSplit =
     selectedItem instanceof TrackElement && canSplitElement(selectedItem, currentTime);
+  // Two different refusals, two different tooltips. Once canSplitElement also rejects a split that
+  // would leave a sub-frame sliver, "move the playhead over the clip" became a lie for a playhead
+  // that IS over the clip, just too near an edge (audit 2026-08-04, R2-24).
+  const playheadInsideClip =
+    selectedItem instanceof TrackElement &&
+    selectedItem.getStart() < currentTime &&
+    selectedItem.getEnd() > currentTime;
   const handleSplit = useCallback(() => {
     if (canSplit && onSplit) {
       onSplit(selectedItem as TrackElement, currentTime);
@@ -200,9 +207,11 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
           title={
             !(selectedItem instanceof TrackElement)
               ? "Select a clip to split"
-              : !canSplit
-              ? "Move the playhead over the selected clip to split it"
-              : "Split at playhead"
+              : canSplit
+              ? "Split at playhead"
+              : playheadInsideClip
+              ? "Too close to the edge of the clip to split"
+              : "Move the playhead over the selected clip to split it"
           }
           className={`control-btn split-btn ${!canSplit ? "btn-disabled" : ""}`}
         >

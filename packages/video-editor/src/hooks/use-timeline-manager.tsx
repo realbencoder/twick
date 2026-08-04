@@ -14,6 +14,27 @@ import { useMemo } from "react";
 import { DRAG_TYPE } from "../helpers/constants";
 import type { DropTarget } from "../utils/drop-target";
 
+/** One frame at 30fps — the least source a clip can keep and still show a real picture. */
+const MIN_SOURCE_TAIL = 1 / 30;
+
+/**
+ * How many seconds of SOURCE this clip has, or 0 when unknown.
+ *
+ * Two places carry it and neither covers every clip. `props.fileDuration` is written by the app for
+ * the main recording and SURVIVES a project reload (props serialize). `mediaDuration` is set by
+ * updateVideoMeta() when any video/audio element is added and covers stock B-roll and music, but it
+ * is a class field that does NOT serialize — so it is present for the rest of the session and gone
+ * after a reload. Reading both means a clip is clamped whenever we know its length, and falls back
+ * to today's unclamped behaviour when we genuinely don't (never a wrong clamp).
+ */
+const resolveSourceDuration = (element: TrackElement): number => {
+  const fromProps = Number((element.getProps?.() as any)?.fileDuration);
+  if (Number.isFinite(fromProps) && fromProps > 0) return fromProps;
+  const fromMeta = Number((element as any).getMediaDuration?.());
+  if (Number.isFinite(fromMeta) && fromMeta > 0) return fromMeta;
+  return 0;
+};
+
 export interface ElementDropParams {
   element: TrackElement;
   dragType: string;
@@ -142,37 +163,55 @@ export const useTimelineManager = (): TimelineManagerReturn => {
           (updates.start - element.getStart()) *
           (elementProps?.playbackRate || 1);
 
+        // Clamp the resulting source in-point to the real file. Dragging the START handle LEFT past
+        // the beginning drove startAt negative — the decoder has nothing before 0, so the preview
+        // froze on frame 0 while the timeline claimed real content. The upper bound keeps the
+        // in-point from passing the file's end (which would leave the clip with no source at all).
+        // No source duration known → only the >= 0 floor applies (audit 2026-08-04, R2-23).
+        const _srcDur = resolveSourceDuration(element);
+        const _rawStartAt = element.getStartAt() + delta;
+        const _maxStartAt = _srcDur > 0 ? Math.max(0, _srcDur - MIN_SOURCE_TAIL) : Infinity;
+        const _clampedStartAt = Math.min(Math.max(0, _rawStartAt), _maxStartAt);
+
         if (element instanceof AudioElement) {
-          (element as AudioElement).setStartAt(element.getStartAt() + delta);
+          (element as AudioElement).setStartAt(_clampedStartAt);
         } else {
-          (element as VideoElement).setStartAt(element.getStartAt() + delta);
+          (element as VideoElement).setStartAt(_clampedStartAt);
         }
       }
     }
-    // Clamp end handle drags:
-    // - Main video: clamp to file duration (can't extend past actual source video)
-    // - Overlays: clamp to timeline duration (can't extend past video end)
+    // Clamp end handle drags. EVERY clip is clamped to its own remaining SOURCE, and overlays are
+    // additionally clamped to the timeline (they can't outlive the video they sit on).
+    //
+    // The source clamp used to run ONLY on main-VIDEO-track clips, so a 5s stock B-roll clip could
+    // be dragged out to 60s: the timeline said 60s, the file had 5s, and the extra 55s played as a
+    // frozen last frame in the preview and decoded to nothing in the render. Source duration for an
+    // overlay lives on the element as mediaDuration (set by updateVideoMeta at add time) rather than
+    // props.fileDuration — read both (audit 2026-08-04, R2-23).
     let clampedEnd = updates.end;
     if (dragType === DRAG_TYPE.END) {
       const _elTrack = editor.getTrackById(element.getTrackId());
       const _isMainVideo = _elTrack && _elTrack.getType() === TRACK_TYPES.VIDEO;
-      if (_isMainVideo) {
-        // Main video: clamp to actual file duration if available
-        const _props: any = element.getProps?.() ?? {};
-        const _fileDur = _props.fileDuration;
+      const _props: any = element.getProps?.() ?? {};
+      const _srcDur = resolveSourceDuration(element);
+      if (_srcDur && _srcDur > 0) {
         const _startAt = _props.time ?? _props.startAt ?? 0;
-        if (_fileDur && _fileDur > 0) {
-          // Remaining SOURCE seconds cover (fileDur - startAt) / rate TIMELINE seconds — a 2x clip
-          // was allowed to extend twice past its real content (frozen tail), a 0.5x clip was
-          // wrongly blocked at half its range (audit 2026-08-03, T4).
-          const _rate = Number(_props.playbackRate) || 1;
-          const maxEnd = updates.start + (_fileDur - _startAt) / _rate;
-          if (clampedEnd > maxEnd) clampedEnd = maxEnd;
-        }
-      } else if (totalDuration > 0 && clampedEnd > totalDuration) {
+        // Remaining SOURCE seconds cover (srcDur - startAt) / rate TIMELINE seconds — a 2x clip
+        // was allowed to extend twice past its real content (frozen tail), a 0.5x clip was
+        // wrongly blocked at half its range (audit 2026-08-03, T4).
+        const _rate = Number(_props.playbackRate) || 1;
+        const maxEnd = updates.start + (_srcDur - _startAt) / _rate;
+        if (clampedEnd > maxEnd) clampedEnd = maxEnd;
+      }
+      if (!_isMainVideo && totalDuration > 0 && clampedEnd > totalDuration) {
         clampedEnd = totalDuration;
       }
     }
+    // The trim and the caption cleanup below are ONE gesture, so they must be ONE undo entry.
+    // updateElements snapshotted here and the caption cleanup then mutated tracks under a bare
+    // refresh() (no snapshot), so the recorded history and the live timeline disagreed about which
+    // captions existed (audit 2026-08-04, R2-25).
+    editor.batchHistory(() => {
     editor.updateElements([
       { elementId: element.getId(), updates: { s: updates.start, e: clampedEnd } },
     ]);
@@ -210,6 +249,7 @@ export const useTimelineManager = (): TimelineManagerReturn => {
         }
       }
     }
+    });
     setSelectedItem(element);
     editor.refresh();
     closeMainTrackGapsIfNeeded(element);

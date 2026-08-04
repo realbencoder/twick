@@ -125,11 +125,30 @@ export const getCurrentElements = (
  * // canSplit = true if element spans across 10.5 seconds
  * ```
  */
+/**
+ * Smallest piece a split may leave behind: one frame at 30fps (the pipeline's CFR).
+ *
+ * Anything shorter is not a clip a creator can work with — at any usable zoom it is a sub-pixel
+ * sliver they can't click to select, can't grab a handle on, and therefore can't delete. It also
+ * renders as at most a single frame, so it is invisible in the output while still counting as a
+ * cut (which routes the whole video to server render).
+ */
+export const MIN_SPLIT_PIECE_SECONDS = 1 / 30;
+
 export const canSplitElement = (element: TrackElement, currentTime: number) => {
   // Strict on BOTH ends: a split exactly on an element's start or end produces a zero-length sliver
   // (the validator then inflates it to a 0.01s ghost clip, which also flips the video to server
   // render). Symmetric with getCurrentElements, which already uses `getEnd() > currentTime`.
-  return element.getStart() < currentTime && element.getEnd() > currentTime;
+  //
+  // The near-edge case is the same defect one frame in: splitting 5ms after the start technically
+  // satisfies start < t < end but leaves a 5ms piece that is unselectable and undeletable. Require
+  // BOTH halves to clear one frame (audit 2026-08-04, R2-24). rippleDelete's internal split shares
+  // this predicate; a refused split there falls through to shortening in place, which differs from
+  // the split by less than a frame.
+  return (
+    currentTime - element.getStart() >= MIN_SPLIT_PIECE_SECONDS &&
+    element.getEnd() - currentTime >= MIN_SPLIT_PIECE_SECONDS
+  );
 };
 
 /**
