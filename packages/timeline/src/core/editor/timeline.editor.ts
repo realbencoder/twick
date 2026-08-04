@@ -1409,20 +1409,42 @@ export class TimelineEditor {
           continue;
         }
         if (start < fromTime && end > toTime) {
-          const splitter = new ElementSplitter(fromTime);
-          const result = element.accept(splitter);
-          friend.removeElement(element);
-          if (result.success && result.firstElement && result.secondElement) {
-            const secondPrevStart = result.secondElement.getStart();
-            const secondPrevEnd = result.secondElement.getEnd();
-            result.secondElement.setEnd(fromTime + (end - toTime));
-            // The splitter anchored the second half's source at fromTime — skip the cut region too,
-            // otherwise the removed content still plays and real content falls off the end.
-            this.advanceSourceOffset(result.secondElement, durationToRemove);
-            this.adjustCaptionWordsForTimeChange(result.secondElement, secondPrevStart, secondPrevEnd);
-            friend.addElement(result.firstElement, true);
-            friend.addElement(result.secondElement, true);
+          // Only TIMED MEDIA needs splitting here: the cut removes a window of SOURCE, so the
+          // element has to become two pieces reading two different source ranges. A text or image
+          // overlay has no source timeline — it is one piece of content shown over a window — so
+          // splitting it is wrong twice over. ElementSplitter.visitTextElement divides the text BY
+          // WORD, so a ripple cut through "Follow me for more tips" silently rewrote it into
+          // "Follow me" + "for more tips". And a single-word overlay ("NEW", a name) returns
+          // success:false, which combined with the unconditional removeElement below DELETED it.
+          // Overlays now behave like the trim branches: same content, window shortened by the cut.
+          const type = element.getType().toLowerCase();
+          const isTimedMedia = type === "video" || type === "audio";
+
+          if (isTimedMedia) {
+            const splitter = new ElementSplitter(fromTime);
+            const result = element.accept(splitter);
+            if (result.success && result.firstElement && result.secondElement) {
+              // Remove ONLY once the split actually produced both halves. Removing first meant a
+              // refused split (canSplitElement false, degenerate geometry) dropped the clip with
+              // nothing added back — silent data loss with no error and no undo entry of its own.
+              friend.removeElement(element);
+              const secondPrevStart = result.secondElement.getStart();
+              const secondPrevEnd = result.secondElement.getEnd();
+              result.secondElement.setEnd(fromTime + (end - toTime));
+              // The splitter anchored the second half's source at fromTime — skip the cut region too,
+              // otherwise the removed content still plays and real content falls off the end.
+              this.advanceSourceOffset(result.secondElement, durationToRemove);
+              this.adjustCaptionWordsForTimeChange(result.secondElement, secondPrevStart, secondPrevEnd);
+              friend.addElement(result.firstElement, true);
+              friend.addElement(result.secondElement, true);
+              continue;
+            }
+            // Split refused — fall through and shorten in place. Losing the cut's worth of
+            // duration is wrong-but-visible; deleting the clip is wrong-and-invisible.
           }
+
+          element.setEnd(end - durationToRemove);
+          this.adjustCaptionWordsForTimeChange(element, start, end);
           continue;
         }
         if (start < fromTime && end <= toTime) {
@@ -1563,6 +1585,17 @@ export class TimelineEditor {
     if (existingLength === words.length && prevDuration > 0 && nextDuration > 0) {
       const adjustWords = (wordsArr: unknown): number[] | null => {
         if (!Array.isArray(wordsArr) || wordsArr.length === 0) return null;
+        // Legacy projects store wordsMs in SECONDS despite the name (the compositor detects this
+        // on read, and applyCutToCaption uses the same rule). Doing the arithmetic in ms against a
+        // seconds array made every word land ~1000x past the clip, so the highlight stuck on the
+        // last word for the whole caption. Detect per array, compute in ms, write back in the
+        // array's OWN unit so a saved project is never double-converted.
+        const nums = wordsArr as number[];
+        const maxVal = Math.max(...nums);
+        const isSeconds = maxVal > 0 && maxVal < prevEnd * 2;
+        const toMs = (v: number) => (isSeconds ? v * 1000 : v);
+        const fromMs = (v: number) => (isSeconds ? v / 1000 : v);
+
         const prevDurationMs = prevDuration * 1000;
         const nextDurationMs = nextDuration * 1000;
         const startMsPrev = prevStart * 1000;
@@ -1570,13 +1603,13 @@ export class TimelineEditor {
 
         if (Math.abs(prevDuration - nextDuration) < 1e-6) {
           const deltaMs = startMsNext - startMsPrev;
-          return (wordsArr as number[]).map((w) => w + deltaMs);
+          return nums.map((w) => fromMs(toMs(w) + deltaMs));
         }
 
-        return (wordsArr as number[]).map((w) => {
-          const rel = prevDurationMs ? (w - startMsPrev) / prevDurationMs : 0;
+        return nums.map((w) => {
+          const rel = prevDurationMs ? (toMs(w) - startMsPrev) / prevDurationMs : 0;
           const clampedRel = Math.max(0, Math.min(1, rel));
-          return startMsNext + clampedRel * nextDurationMs;
+          return fromMs(startMsNext + clampedRel * nextDurationMs);
         });
       };
 
