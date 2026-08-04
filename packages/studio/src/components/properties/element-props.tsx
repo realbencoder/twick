@@ -269,7 +269,7 @@ export function ElementProps({ selectedElement, updateElement, onBringForward, o
                   onClick={onSendBackward}
                   disabled={!canSendBackward}
                   className="btn-ghost"
-                  title={canSendBackward ? "Send backward" : "Already at the back"}
+                  title={canSendBackward ? "Send backward" : "This is as far back as it goes"}
                   style={{ padding: '4px 8px', fontSize: '11px', opacity: canSendBackward ? 1 : 0.4, cursor: canSendBackward ? 'pointer' : 'not-allowed' }}
                 >
                   <ArrowDown className="icon-sm" /> Back

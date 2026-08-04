@@ -78,9 +78,20 @@ export function PropertiesPanelContainer({
           t.elements?.some((e: any) => e.id === selectedElement.getId())
         )
       : -1;
+  // The MAIN video track is the floor. Sending an overlay BELOW it makes the overlay vanish from
+  // the preview (the full-canvas main video paints over it), while the server render — which paints
+  // the main video as its base buffer — structurally cannot draw anything beneath it and still
+  // shows the overlay. So that state is a guaranteed preview/export divergence in which the
+  // creator approves a video missing something the MP4 contains. Rather than pick which wrong
+  // behaviour to keep, make the state unreachable: Send Backward stops at the main track, the same
+  // way both buttons already stop at the stacking boundary. Founder decision 2026-08-04.
+  const mainTrackIdx = present?.tracks
+    ? present.tracks.findIndex((t: any) => (t.name ?? t.getName?.()) === "Video")
+    : -1;
+  const backFloor =
+    mainTrackIdx >= 0 ? mainTrackIdx - 1 : (present?.tracks?.length ?? 0) - 1;
   const canBringForward = selectedTrackIdx > 0;
-  const canSendBackward =
-    selectedTrackIdx >= 0 && selectedTrackIdx < (present?.tracks?.length ?? 0) - 1;
+  const canSendBackward = selectedTrackIdx >= 0 && selectedTrackIdx < backFloor;
 
   const handleBackgroundColorChange = useCallback(
     (value: string) => {
