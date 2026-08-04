@@ -33,7 +33,7 @@ const ControlManager = ({
     followPlayheadEnabled,
     setFollowPlayheadEnabled,
   } = useTimelineContext();
-  const { deleteItem, splitElement, handleUndo, handleRedo } =
+  const { deleteItem, splitElement, handleUndo, handleRedo, deleteBlockedReason } =
     useTimelineControl();
 
   useCanvasKeyboard({
@@ -68,6 +68,7 @@ const ControlManager = ({
         canUndo={canUndo}
         canRedo={canRedo}
         onDelete={() => deleteItem()}
+        deleteBlockedReason={deleteBlockedReason}
         onSplit={splitElement}
         onUndo={handleUndo}
         onRedo={handleRedo}

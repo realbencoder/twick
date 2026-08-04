@@ -4,6 +4,7 @@ import {
   useTimelineContext,
   resolveIds,
 } from "@twick/timeline";
+import { isMainVideoTrack } from "../helpers/editor.utils";
 
 /**
  * Custom hook to manage timeline control operations.
@@ -41,16 +42,30 @@ const useTimelineControl = () => {
 
     const isTrackLocked = (t?: Track | null) =>
       (t?.getProps() as { locked?: boolean } | undefined)?.locked === true;
+    let removed = 0;
     for (const el of toDelete) {
       if (el instanceof Track) {
+        // The MAIN recording track is not deletable. The track header is also the drag handle,
+        // so clicking it to grab a track SELECTS it — and a bare Delete/Backspace then removed
+        // the creator's whole recording with no confirmation. Nothing in the editor offers a way
+        // to put it back, the video-less project autosaves within 3s, and it renders with no
+        // picture. Extends isMainVideoTrack's existing role (canDropElementOnTrack already
+        // enforces "the main track is reorder-only") with "and it can't be deleted".
+        // Guarding at the MUTATION site covers the button, the keyboard, and any future caller.
+        if (isMainVideoTrack(el)) continue;
         if (isTrackLocked(el)) continue; // locked track — don't delete it
         editor.removeTrack(el);
+        removed++;
       } else if (el instanceof TrackElement) {
         if (isTrackLocked(editor.getTrackById(el.getTrackId()))) continue; // clip on a locked track — don't delete
         editor.rippleRemoveElement(el);
+        removed++;
       }
     }
-    setSelectedItem(null);
+    // Only clear the selection when something actually went. Clearing unconditionally made a
+    // REFUSED delete (locked track/clip, main track) look exactly like a successful one: the clip
+    // stayed but its selection vanished, so the creator read it as deleted-then-reappeared.
+    if (removed > 0) setSelectedItem(null);
   };
   
   /**
@@ -112,11 +127,31 @@ const useTimelineControl = () => {
     editor.redo();
   };
 
+  // Why Delete would refuse, computed from the SAME guards deleteItem enforces so the button can
+  // never advertise an action the mutation site will silently drop. null = deletable.
+  const deleteBlockedReason: string | null = (() => {
+    const tracks = editor.getTimelineData()?.tracks ?? [];
+    const sel = resolveIds(selectedIds, tracks);
+    if (sel.length === 0) return null; // nothing selected — the plain disabled state covers it
+    const lockedTrack = (t?: Track | null) =>
+      (t?.getProps() as { locked?: boolean } | undefined)?.locked === true;
+    const deletable = sel.filter((el) => {
+      if (el instanceof Track) return !isMainVideoTrack(el) && !lockedTrack(el);
+      if (el instanceof TrackElement) return !lockedTrack(editor.getTrackById(el.getTrackId()));
+      return false;
+    });
+    if (deletable.length > 0) return null; // mixed selection keeps delete-what-you-can
+    if (sel.some((el) => el instanceof Track && isMainVideoTrack(el)))
+      return "The main video track can't be deleted";
+    return "This track is locked — unlock it to delete";
+  })();
+
   return {
     splitElement,
     deleteItem,
     handleUndo,
     handleRedo,
+    deleteBlockedReason,
   };
 };
 

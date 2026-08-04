@@ -310,6 +310,15 @@ export const usePlayerManager = ({
     }
   };
 
+  /** Same predicate deleteElement enforces, so the canvas context menu can disable Delete
+   *  instead of dead-clicking (it returned early on a locked track with no feedback). */
+  const isElementOnLockedTrack = (elementId: string): boolean =>
+    (editor.getTimelineData()?.tracks ?? []).some(
+      (track) =>
+        track.getElementById(elementId) &&
+        (track.getProps() as { locked?: boolean } | undefined)?.locked === true
+    );
+
   const deleteElement = (elementId: string): void => {
     const tracks = editor.getTimelineData()?.tracks ?? [];
     for (const track of tracks) {
@@ -384,5 +393,6 @@ export const usePlayerManager = ({
     bringForward,
     sendBackward,
     deleteElement,
+    isElementOnLockedTrack,
   };
 };

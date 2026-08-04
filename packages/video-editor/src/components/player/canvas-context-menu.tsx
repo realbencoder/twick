@@ -9,6 +9,8 @@ export interface CanvasContextMenuProps {
   onBringForward: (elementId: string) => void;
   onSendBackward: (elementId: string) => void;
   onDelete: (elementId: string) => void;
+  /** Set when Delete would be refused (locked track). Shown as the disabled reason. */
+  deleteBlockedReason?: string | null;
   onClose: () => void;
 }
 
@@ -25,6 +27,7 @@ export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({
   onBringForward,
   onSendBackward,
   onDelete,
+  deleteBlockedReason = null,
   onClose,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -94,7 +97,9 @@ export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({
       <button
         type="button"
         className="twick-canvas-context-menu-item twick-canvas-context-menu-item-danger"
-        onClick={() => handleAction(onDelete)}
+        onClick={() => { if (!deleteBlockedReason) handleAction(onDelete); }}
+        disabled={!!deleteBlockedReason}
+        title={deleteBlockedReason ?? undefined}
         role="menuitem"
       >
         Delete

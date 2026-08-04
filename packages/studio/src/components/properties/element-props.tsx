@@ -50,7 +50,13 @@ export function ElementProps({ selectedElement, updateElement, onBringForward, o
   }
   const handlePositionChange = (props: Record<string, any>) => {
     if (selectedElement) {
-      selectedElement.setPosition({ x: props.x ?? 0, y: props.y ?? 0 });
+      // Each input sends ONLY its own axis, so `?? 0` read the untouched one as "set to zero"
+      // and snapped the element to the canvas centre on that axis — a creator who dragged an
+      // overlay into place and then nudged X in the Transform panel watched Y jump away.
+      // Merge against the element's current position, the same read-then-merge shape
+      // handleDimensionsChange uses directly below.
+      const current = selectedElement.getPosition();
+      selectedElement.setPosition({ x: props.x ?? current.x, y: props.y ?? current.y });
       updateElement?.(selectedElement as TrackElement);
     }
   }

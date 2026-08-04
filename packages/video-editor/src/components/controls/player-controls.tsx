@@ -47,6 +47,8 @@ import {
 export interface PlayerControlsProps {
   /** Currently selected timeline element or track (primary) */
   selectedItem: TrackElement | Track | null;
+  /** Why Delete is refused (locked track / main video track), or null when deletable. */
+  deleteBlockedReason?: string | null;
   /** Set of selected IDs for multi-select */
   selectedIds?: Set<string>;
   /** Current playback time in seconds */
@@ -89,6 +91,7 @@ export interface PlayerControlsProps {
 
 const PlayerControls: React.FC<PlayerControlsProps> = ({
   selectedItem,
+  deleteBlockedReason = null,
   selectedIds = new Set(),
   duration,
   currentTime,
@@ -127,13 +130,20 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
     onSeek?.(duration);
   }, [onSeek, duration]);
 
+  const hasSelection = selectedIds.size > 0;
+
+  // The padlock and the main-track rule are enforced at the MUTATION site (deleteItem), so an
+  // enabled-looking Delete could refuse silently — the clip stayed and only its selection
+  // vanished, which reads as "deleted, then it came back". `deleteBlockedReason` is computed from
+  // those same guards and handed down, so the button can never advertise an action that will be
+  // dropped. Same disabled+explanatory-title shape the Split button below already uses.
+  const canDelete = hasSelection && !deleteBlockedReason;
+
   const handleDelete = useCallback(() => {
-    if (selectedIds.size > 0 && onDelete) {
+    if (canDelete && onDelete) {
       onDelete();
     }
-  }, [selectedIds.size, onDelete]);
-
-  const hasSelection = selectedIds.size > 0;
+  }, [canDelete, onDelete]);
 
   // Split only works when the playhead is strictly INSIDE the selected clip (canSplitElement — the
   // same validator splitElement uses). Outside, split is a silent no-op; gate the button on it so
@@ -169,10 +179,16 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
       <div className="edit-controls">
         <button
           onClick={handleDelete}
-          disabled={!hasSelection}
-          title="Delete"
+          disabled={!canDelete}
+          title={
+            deleteBlockedReason
+              ? deleteBlockedReason
+              : selectedItem instanceof Track
+              ? "Delete this whole track"
+              : "Delete"
+          }
           className={`control-btn delete-btn ${
-            !hasSelection ? "btn-disabled" : ""
+            !canDelete ? "btn-disabled" : ""
           }`}
         >
           <Trash2 className="icon-md" />

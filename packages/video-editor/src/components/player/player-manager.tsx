@@ -79,6 +79,7 @@ export const PlayerManager = ({
     bringForward,
     sendBackward,
     deleteElement,
+    isElementOnLockedTrack,
   } = usePlayerManager({ videoProps, canvasConfig });
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; elementId: string } | null>(null);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
@@ -295,6 +296,13 @@ export const PlayerManager = ({
           onBringForward={bringForward}
           onSendBackward={sendBackward}
           onDelete={deleteElement}
+          // deleteElement returns early on a locked track, so an always-enabled Delete here was a
+          // pure dead click — the menu closed and nothing happened. Say why instead.
+          deleteBlockedReason={
+            isElementOnLockedTrack(contextMenu.elementId)
+              ? "This track is locked — unlock it to delete"
+              : null
+          }
           onClose={closeContextMenu}
         />
       )}
