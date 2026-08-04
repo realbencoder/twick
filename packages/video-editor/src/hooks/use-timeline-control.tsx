@@ -42,7 +42,34 @@ const useTimelineControl = () => {
 
     const isTrackLocked = (t?: Track | null) =>
       (t?.getProps() as { locked?: boolean } | undefined)?.locked === true;
+
+    // A track delete is a BULK delete wearing a single-click costume: it takes every clip on the
+    // track, and the timeline just shows one fewer row, which is easy not to notice — and the
+    // project autosaves ~3s later, so an unnoticed one becomes permanent. Confirm it, naming what
+    // is lost (the same shape the studio header's canvas-switch confirm uses). An EMPTY track
+    // deletes silently — there is nothing to lose. Founder decision 2026-08-04.
+    const tracksToConfirm = toDelete.filter(
+      (el): el is Track =>
+        el instanceof Track &&
+        !isMainVideoTrack(el) &&
+        !isTrackLocked(el) &&
+        (el.getElements?.()?.length ?? 0) > 0
+    );
+    if (tracksToConfirm.length > 0 && typeof window !== "undefined") {
+      const describe = (t: Track) => {
+        const n = t.getElements?.()?.length ?? 0;
+        const name = t.getName?.() || "this";
+        return `${name} track (${n} item${n === 1 ? "" : "s"})`;
+      };
+      const what =
+        tracksToConfirm.length === 1
+          ? `the ${describe(tracksToConfirm[0])}`
+          : `${tracksToConfirm.length} tracks`;
+      if (!window.confirm(`Delete ${what}? Everything on it is removed.`)) return;
+    }
+
     let removed = 0;
+    let keptLocked = 0;
     for (const el of toDelete) {
       if (el instanceof Track) {
         // The MAIN recording track is not deletable. The track header is also the drag handle,
@@ -53,19 +80,28 @@ const useTimelineControl = () => {
         // enforces "the main track is reorder-only") with "and it can't be deleted".
         // Guarding at the MUTATION site covers the button, the keyboard, and any future caller.
         if (isMainVideoTrack(el)) continue;
-        if (isTrackLocked(el)) continue; // locked track — don't delete it
+        if (isTrackLocked(el)) { keptLocked++; continue; } // locked track — don't delete it
         editor.removeTrack(el);
         removed++;
       } else if (el instanceof TrackElement) {
-        if (isTrackLocked(editor.getTrackById(el.getTrackId()))) continue; // clip on a locked track — don't delete
+        if (isTrackLocked(editor.getTrackById(el.getTrackId()))) { keptLocked++; continue; } // clip on a locked track — don't delete
         editor.rippleRemoveElement(el);
         removed++;
       }
     }
-    // Only clear the selection when something actually went. Clearing unconditionally made a
-    // REFUSED delete (locked track/clip, main track) look exactly like a successful one: the clip
-    // stayed but its selection vanished, so the creator read it as deleted-then-reappeared.
-    if (removed > 0) setSelectedItem(null);
+    // A MIXED selection deletes what it can and keeps the locked ones — refusing the whole batch
+    // would defeat the lock's main use (protecting the subtitle track WHILE you cut video). But it
+    // must not be silent: say what was kept, and leave those items SELECTED so it is visible.
+    // Founder decision 2026-08-04.
+    if (removed > 0 && keptLocked > 0 && typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("twick-delete-kept-locked", { detail: { removed, keptLocked } })
+      );
+    }
+    // Only clear the selection when something actually went AND nothing was held back. Clearing
+    // unconditionally made a REFUSED delete look exactly like a successful one: the clip stayed
+    // but its selection vanished, so the creator read it as deleted-then-reappeared.
+    if (removed > 0 && keptLocked === 0) setSelectedItem(null);
   };
   
   /**

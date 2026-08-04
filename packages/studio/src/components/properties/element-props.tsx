@@ -61,6 +61,24 @@ export function ElementProps({ selectedElement, updateElement, onBringForward, o
     }
   }
 
+  /**
+   * Commit ONE axis, on blur/Enter rather than on every keystroke.
+   *
+   * Applying each keystroke meant typing "150" moved the element to 1, then 15, then 150, and
+   * clearing the field to retype sent `Number("") === 0` — snapping that axis to the canvas
+   * centre. Typing a leading "-" did the same, so negative coordinates were unreachable. All three
+   * are the same defect: intermediate keystrokes treated as committed values. Blur-commit is what
+   * every design tool does, and it fixes all three at once. An empty/invalid field is ignored, so
+   * clearing and clicking away leaves the element where it was.
+   */
+  const commitPosition = (axis: "x" | "y", raw: string) => {
+    const trimmed = raw.trim();
+    if (trimmed === "") return;
+    const next = Number(trimmed);
+    if (!Number.isFinite(next)) return;
+    handlePositionChange({ [axis]: next });
+  };
+
   const handleDimensionsChange = (width?: number, height?: number) => {
     if (!selectedElement) return;
     if (selectedElement instanceof RectElement) {
@@ -107,20 +125,24 @@ export function ElementProps({ selectedElement, updateElement, onBringForward, o
             <PropertyRow label="Position X">
               <input
                 type="number"
-                value={position.x ?? 0}
-                onChange={(e) =>
-                  handlePositionChange({ x: Number(e.target.value) })
-                }
+                defaultValue={position.x ?? 0}
+                key={`px-${selectedElement?.getId?.() ?? "none"}-${position.x ?? 0}`}
+                onBlur={(e) => commitPosition("x", e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                }}
                 className="input-dark"
               />
             </PropertyRow>
             <PropertyRow label="Position Y">
               <input
                 type="number"
-                value={position.y ?? 0}
-                onChange={(e) =>
-                  handlePositionChange({ y: Number(e.target.value) })
-                }
+                defaultValue={position.y ?? 0}
+                key={`py-${selectedElement?.getId?.() ?? "none"}-${position.y ?? 0}`}
+                onBlur={(e) => commitPosition("y", e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                }}
                 className="input-dark"
               />
             </PropertyRow>
