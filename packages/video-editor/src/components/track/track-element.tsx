@@ -309,6 +309,49 @@ export const TrackElementView = memo(({
   // video has no storyboard. 'twick-filmstrip-ready' triggers the first paint if it registers late.
   const filmstripCanvasRef = useRef<HTMLCanvasElement>(null);
   const showFilmstrip = isMainVideoTrack && element.getType() === "video";
+
+  // ── Silence-cut PREVIEW BANDS (auto-silence Phase 2, item 10) ─────────────
+  // While the app's Remove Silences popover is open it registers the candidate
+  // cut ranges on window.__twick_silence_preview ({ ranges: [[from,to]...] in
+  // TIMELINE seconds, excluded: number[] of range indices }) and dispatches
+  // 'twick-silence-preview' — the same app↔fork bridge shape as the waveform
+  // and filmstrip. Bands are DISPLAY-ONLY (pointer-events none): included cuts
+  // amber, excluded cuts dimmed grey — so the creator sees exactly where every
+  // cut lands on their own footage before committing 10-130 edits on trust.
+  // Cleared (bridge nulled + event) when the popover closes.
+  const [silenceTick, setSilenceTick] = useState(0);
+  useEffect(() => {
+    if (!isMainVideoTrack) return;
+    const bump = () => setSilenceTick((t) => t + 1);
+    window.addEventListener("twick-silence-preview", bump);
+    return () => window.removeEventListener("twick-silence-preview", bump);
+  }, [isMainVideoTrack]);
+  const silenceBands = useMemo(() => {
+    if (!isMainVideoTrack || element.getType() !== "video") return [];
+    const data = (window as any).__twick_silence_preview as
+      | { ranges: Array<[number, number]>; excluded?: number[] }
+      | null
+      | undefined;
+    if (!data?.ranges?.length) return [];
+    const clipStart = position.start;
+    const clipSpan = position.end - position.start;
+    if (!(clipSpan > 0)) return [];
+    const excluded = new Set(data.excluded ?? []);
+    const bands: Array<{ leftPct: number; widthPct: number; excluded: boolean; key: string }> = [];
+    data.ranges.forEach(([f, t], i) => {
+      const lo = Math.max(f, clipStart);
+      const hi = Math.min(t, position.end);
+      if (hi - lo <= 0.01) return;
+      bands.push({
+        key: `${i}-${f.toFixed(3)}`,
+        leftPct: ((lo - clipStart) / clipSpan) * 100,
+        widthPct: ((hi - lo) / clipSpan) * 100,
+        excluded: excluded.has(i),
+      });
+    });
+    return bands;
+    // silenceTick re-derives on every bridge dispatch; position keeps bands glued through drags.
+  }, [silenceTick, isMainVideoTrack, element, position.start, position.end]);
   useEffect(() => {
     if (!showFilmstrip) return;
     const canvas = filmstripCanvasRef.current;
@@ -756,6 +799,23 @@ export const TrackElementView = memo(({
             }}
           />
         ) : null}
+        {silenceBands.map((b) => (
+          <div
+            key={b.key}
+            style={{
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              left: `${b.leftPct}%`,
+              width: `${b.widthPct}%`,
+              zIndex: 2,
+              pointerEvents: "none",
+              background: b.excluded ? "rgba(120,120,120,0.30)" : "rgba(251,146,60,0.40)",
+              borderLeft: b.excluded ? "1px dashed rgba(160,160,160,0.8)" : "1px solid rgba(251,146,60,0.95)",
+              borderRight: b.excluded ? "1px dashed rgba(160,160,160,0.8)" : "1px solid rgba(251,146,60,0.95)",
+            }}
+          />
+        ))}
         {hasHandles ? (
           <div
             style={{ touchAction: "none" , zIndex: isSelected? 100 : 1}}
