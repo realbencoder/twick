@@ -2,6 +2,7 @@ import {
   extractVideoAudio,
   generateShortUuid,
   getTotalDuration,
+  MIN_SPLIT_PIECE_SECONDS,
 } from "../../utils/timeline.utils";
 import { migrateProject, CURRENT_PROJECT_VERSION } from "../../utils/migrations";
 import { TRACK_TYPES } from "../../utils/constants";
@@ -1481,8 +1482,25 @@ export class TimelineEditor {
               friend.addElement(result.secondElement, true);
               continue;
             }
-            // Split refused — fall through and shorten in place. Losing the cut's worth of
-            // duration is wrong-but-visible; deleting the clip is wrong-and-invisible.
+            // Split refused — shorten in place. WHICH side gets dropped decides whether the
+            // CUT content actually leaves the video (round-3 rework, R2-24): the refusal is a
+            // sub-frame piece at one edge, and the near-START case is the one that matters —
+            // fromTime within one frame of the element's start means the whole HEAD + cut window
+            // should go. The old unconditional tail-shorten there kept PLAYING the cut region
+            // (a Remove Silences run kept the silence) and dropped good tail content instead.
+            const _headPiece = fromTime - start;
+            if (_headPiece < MIN_SPLIT_PIECE_SECONDS) {
+              // Near-start refusal: keep the content AFTER the cut. Duration shrinks by the
+              // ripple amount (no gap against the shifted later elements); the SOURCE advances
+              // past the sub-frame head + the cut window, so what plays is the surviving
+              // content — off by at most the sub-frame head piece at the tail.
+              element.setEnd(end - durationToRemove);
+              this.advanceSourceOffset(element, _headPiece + durationToRemove);
+              this.adjustCaptionWordsForTimeChange(element, start, end);
+              continue;
+            }
+            // Near-END refusal (both the cut and the tail are sub-frame): the tail-shorten
+            // below errs by less than a frame — acceptable.
           }
 
           element.setEnd(end - durationToRemove);

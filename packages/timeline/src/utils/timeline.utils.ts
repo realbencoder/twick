@@ -111,6 +111,16 @@ export const getCurrentElements = (
 };
 
 /**
+ * Smallest piece a split may leave behind: one frame at 30fps (the pipeline's CFR).
+ *
+ * Anything shorter is not a clip a creator can work with — at any usable zoom it is a sub-pixel
+ * sliver they can't click to select, can't grab a handle on, and therefore can't delete. It also
+ * renders as at most a single frame, so it is invisible in the output while still counting as a
+ * cut (which routes the whole video to server render).
+ */
+export const MIN_SPLIT_PIECE_SECONDS = 1 / 30;
+
+/**
  * Checks if an element can be split at the specified time.
  * Determines if the current time falls within the element's
  * start and end time range.
@@ -125,16 +135,6 @@ export const getCurrentElements = (
  * // canSplit = true if element spans across 10.5 seconds
  * ```
  */
-/**
- * Smallest piece a split may leave behind: one frame at 30fps (the pipeline's CFR).
- *
- * Anything shorter is not a clip a creator can work with — at any usable zoom it is a sub-pixel
- * sliver they can't click to select, can't grab a handle on, and therefore can't delete. It also
- * renders as at most a single frame, so it is invisible in the output while still counting as a
- * cut (which routes the whole video to server render).
- */
-export const MIN_SPLIT_PIECE_SECONDS = 1 / 30;
-
 export const canSplitElement = (element: TrackElement, currentTime: number) => {
   // Strict on BOTH ends: a split exactly on an element's start or end produces a zero-length sliver
   // (the validator then inflates it to a 0.01s ghost clip, which also flips the video to server

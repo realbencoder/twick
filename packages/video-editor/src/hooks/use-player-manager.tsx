@@ -47,6 +47,7 @@ export const usePlayerManager = ({
     changeLog,
     videoResolution,
     selectedIds,
+    totalDuration,
   } = useTimelineContext();
   const { getCurrentTime, setSeekTime } = useLivePlayerContext();
 
@@ -232,8 +233,19 @@ export const usePlayerManager = ({
       return;
     }
     prevSeekTime.current = seekTime;
+    // Query one epsilon INSIDE the final frame at the exact timeline end (round-3, R2-02 fabric
+    // half). getCurrentElements is half-open (start <= t && end > t) and the playhead parks at
+    // t === totalDuration after playback/scrub-to-end — the query returned NOTHING there, so the
+    // Fabric interaction layer built zero objects and the last clip could not be selected while
+    // parked at the end. Mirrors the app player's renderQueryTime; the epsilon (1ms) is smaller
+    // than the 0.01s minimum element duration so it can never fall outside the last element.
+    // The REPORTED time is untouched — only this element query is nudged.
+    const queryTime =
+      totalDuration > 0 && seekTime >= totalDuration
+        ? Math.max(0, totalDuration - 1e-3)
+        : seekTime;
     const elements = getCurrentElements(
-      seekTime,
+      queryTime,
       editor.getTimelineData()?.tracks ?? []
     );
     let captionProps = {};

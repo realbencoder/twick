@@ -153,25 +153,35 @@ export const useTimelineManager = (): TimelineManagerReturn => {
       }
     }
 
+    // START handle: the TIMELINE start and the SOURCE in-point must be clamped TOGETHER
+    // (round-3 rework of R2-23). The first fix clamped only the in-point, so once it pinned at 0
+    // the handle kept moving left — writing a NEGATIVE timeline start past the ruler's origin and
+    // SHIFTING the clip's content earlier instead of stopping (source 0 played from the new start,
+    // no longer where the creator had placed it). One composed bound: the handle stops at whichever
+    // comes first — the timeline origin, or the source running out of head-room.
+    let clampedStart = updates.start;
     if (dragType === DRAG_TYPE.START) {
+      // Everything stops at the timeline origin — an element cannot begin before 0:00.
+      if (clampedStart < 0) clampedStart = 0;
       if (element instanceof VideoElement || element instanceof AudioElement) {
         const elementProps = element.getProps();
         // Convert the timeline-delta of the START edge into a source-in-point delta. MUST parenthesize
         // the subtraction: `a - b * rate` reads as `a - (b*rate)` and mis-trims sped-up/slowed clips
         // (rate ≠ 1). Correct form is `(start - getStart()) * rate` (matches ElementSplitter's math).
-        const delta =
-          (updates.start - element.getStart()) *
-          (elementProps?.playbackRate || 1);
-
+        const _rate = elementProps?.playbackRate || 1;
         // Clamp the resulting source in-point to the real file. Dragging the START handle LEFT past
         // the beginning drove startAt negative — the decoder has nothing before 0, so the preview
         // froze on frame 0 while the timeline claimed real content. The upper bound keeps the
         // in-point from passing the file's end (which would leave the clip with no source at all).
         // No source duration known → only the >= 0 floor applies (audit 2026-08-04, R2-23).
         const _srcDur = resolveSourceDuration(element);
-        const _rawStartAt = element.getStartAt() + delta;
         const _maxStartAt = _srcDur > 0 ? Math.max(0, _srcDur - MIN_SOURCE_TAIL) : Infinity;
+        const _rawStartAt = element.getStartAt() + (clampedStart - element.getStart()) * _rate;
         const _clampedStartAt = Math.min(Math.max(0, _rawStartAt), _maxStartAt);
+        // Reflect any in-point clamping BACK onto the timeline start, so the handle stops where
+        // the source stops instead of sliding the content — the two values always describe the
+        // same trim.
+        clampedStart = element.getStart() + (_clampedStartAt - element.getStartAt()) / _rate;
 
         if (element instanceof AudioElement) {
           (element as AudioElement).setStartAt(_clampedStartAt);
@@ -213,7 +223,7 @@ export const useTimelineManager = (): TimelineManagerReturn => {
     // captions existed (audit 2026-08-04, R2-25).
     editor.batchHistory(() => {
     editor.updateElements([
-      { elementId: element.getId(), updates: { s: updates.start, e: clampedEnd } },
+      { elementId: element.getId(), updates: { s: clampedStart, e: clampedEnd } },
     ]);
     // When shortening a video element's end, trim/remove subtitle elements past the new video end.
     // Subtitles are time-synced to the video — if the video is shorter, subtitles past the end
