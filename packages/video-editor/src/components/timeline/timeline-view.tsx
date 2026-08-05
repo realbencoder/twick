@@ -37,6 +37,7 @@ function TimelineView({
   onElementDrag,
   onElementDrop,
   onMainReorder,
+  onMainPinSettle,
   onSeek,
   elementColors,
   selectedIds,
@@ -72,6 +73,12 @@ function TimelineView({
    * The view guarantees this is only called for an ACTIVATED, non-cancelled, non-identity drop.
    */
   onMainReorder?: (payload: TrackElementDragPayload, toSlot: number) => void;
+  /**
+   * R3: settle a COMPLETED main-track pin-MOVE that committed no reorder — the manager heals any
+   * real gap (gap-gated inside closeVideoTrackGaps; gapless = zero mutation). Never called for
+   * cancelled gestures.
+   */
+  onMainPinSettle?: (payload: TrackElementDragPayload) => void;
   onSeek: (time: number) => void;
   onItemSelect: (item: Track | TrackElement, event: React.MouseEvent) => void;
   onEmptyClick: () => void;
@@ -246,6 +253,11 @@ function TimelineView({
         const elTrack = (tracks || []).find((t) => t.getId() === payload.element.getTrackId());
         if (payload.dragType === DRAG_TYPE.MOVE && isMainVideoTrack(elTrack)) {
           const active = !!reorderStateRef.current && !reorderCancelledRef.current;
+          // Consume the cancel flag per gesture: it is only reset at the next LIFT, so without
+          // this a pointercancel'd reorder would suppress the settle of a LATER pin jiggle that
+          // never lifts (touch sub-8px drags never re-arm the flag).
+          const wasCancelled = reorderCancelledRef.current;
+          reorderCancelledRef.current = false;
           // Recompute the slot from the DROP pointer (never trust last-hover state — pointer-up
           // ordering differs across mouse/touch). Identity slots return null → no-op.
           const dropSlot =
@@ -255,6 +267,16 @@ function TimelineView({
           clearReorderVisuals();
           if (active && dropSlot && onMainReorder) {
             onMainReorder(payload, dropSlot.slot);
+          } else if (!wasCancelled && onMainPinSettle) {
+            // R3 (drag-to-snap commits): a COMPLETED main-clip MOVE that committed no reorder —
+            // a sub-8px pin jiggle or an identity-slot ghost drop — still settles the pin. The
+            // MOVE pin rendered the clip flush at its magnetic slot all gesture; if the track
+            // holds a real gap that rendered position was never engine truth ("looks snapped,
+            // zoomed out it isn't"). The heal is gap-gated inside closeVideoTrackGaps, so a
+            // gapless release stays zero-mutation/zero-history (the guard this branch exists
+            // for). Cancelled gestures (Esc/pointercancel/blur) keep their zero-mutation
+            // contract and never reach here.
+            onMainPinSettle(payload);
           }
           return;
         }
@@ -310,7 +332,7 @@ function TimelineView({
       onElementDrop({ ...payload, dropTarget });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [onElementDrag, onElementDrop, onMainReorder, tracks, zoomLevel, duration]
+    [onElementDrag, onElementDrop, onMainReorder, onMainPinSettle, tracks, zoomLevel, duration]
   );
 
   useEdgeAutoScroll({

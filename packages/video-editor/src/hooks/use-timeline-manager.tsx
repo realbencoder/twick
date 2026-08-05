@@ -56,6 +56,9 @@ interface TimelineManagerReturn {
     payload: { element: TrackElement; dragType: string; updates: { start: number; end: number } },
     toSlot: number
   ) => void;
+  /** R3: settle a COMPLETED main-track pin-MOVE that committed no reorder — heal any real gap so
+   *  the pinned position the view rendered becomes engine truth. Gapless = zero mutation. */
+  onMainPinSettle: (payload: { element: TrackElement }) => void;
   onReorder: (reorderedItems: Track[]) => void;
   onSeek: (time: number) => void;
   onSelectionChange: (selectedItem: TrackElement | Track | null) => void;
@@ -338,6 +341,21 @@ export const useTimelineManager = (): TimelineManagerReturn => {
   };
 
   /**
+   * R3 (drag-to-snap commits, founder-approved 2026-08-05): settle a COMPLETED main-track
+   * pin-MOVE that committed no reorder. The MOVE pin renders the clip flush at its magnetic slot
+   * for the whole gesture (track-element.tsx) — when the track holds a real gap, that rendered
+   * position was never engine truth ("looks snapped, zoomed out it isn't", audit R3; only a zoom
+   * resync revealed the lie). Committing closeVideoTrackGaps makes the pinned position the
+   * truth: one engine op = one undo entry, the exact same heal every trim commit and the toolbar
+   * "Close gaps" button already run. Gapless releases stay ZERO-mutation — closeVideoTrackGaps
+   * returns before any commit when it finds no gap — so the no-spurious-history guard on pinned
+   * releases (#118 spec) still holds.
+   */
+  const onMainPinSettle = (payload: { element: TrackElement }) => {
+    closeMainTrackGapsIfNeeded(payload.element);
+  };
+
+  /**
    * Only allow separator drop (new track) when the element may leave its track at all.
    * Captions are excluded: they are time-pinned to THEIR caption track — a separator drop
    * would strand them on a generic 'element' track and silently strip caption semantics
@@ -519,6 +537,7 @@ export const useTimelineManager = (): TimelineManagerReturn => {
     onElementDrag,
     onElementDrop,
     onMainReorder,
+    onMainPinSettle,
     onReorder,
     onSeek,
     onSelectionChange,
