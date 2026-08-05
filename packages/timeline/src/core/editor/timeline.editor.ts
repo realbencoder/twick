@@ -1552,6 +1552,9 @@ export class TimelineEditor {
     if (!currentData) return;
     const tracks = currentData.tracks;
     let changed = false;
+    // S7: members of the same batch never clamp against each other — a coherent multi-select
+    // move keeps its internal offsets and only the group's EDGE clamps against outsiders.
+    const updatedIds = new Set(updates.map((u) => u.elementId));
 
     for (const { elementId, updates: patch } of updates) {
       for (const track of tracks) {
@@ -1565,6 +1568,50 @@ export class TimelineEditor {
 
         if (patch.s !== undefined) element.setStart(patch.s);
         if (patch.e !== undefined) element.setEnd(patch.e);
+
+        // S7: caption TIME patches clamp against non-batch siblings at this one commit seam.
+        // Track.updateElement deliberately skips collision validation (the model funnel serves
+        // props/text edits too — see track.ts), and the view drag clamp has an ordering hole
+        // (the next-start clamp overrides the prev-end clamp), so a too-small-gap MOVE could
+        // silently commit overlapping captions that stack until a regenerate explodes.
+        // Clamping beats rejecting: captions are time-pinned, so shrink into the free window;
+        // revert only on a total swallow (S6's sliver lesson — never leave a 10ms fragment).
+        // Props-only patches never enter this branch, preserving the deliberate-skip contract.
+        if (
+          (patch.s !== undefined || patch.e !== undefined) &&
+          element.getType().toLowerCase() === 'caption'
+        ) {
+          const EPS = 0.001; // matches isElementColliding
+          const s0 = element.getStart();
+          const e0 = element.getEnd();
+          let newStart = s0;
+          let newEnd = e0;
+          for (const other of track.getElements()) {
+            const oId = other.getId();
+            if (oId === elementId || updatedIds.has(oId)) continue;
+            const oS = other.getStart();
+            const oE = other.getEnd();
+            if (!(oS < e0 - EPS && oE > s0 + EPS)) continue; // no overlap
+            if (oS <= s0) {
+              // Earlier neighbor swallows our head — push the start to its end.
+              if (oE > newStart) newStart = oE;
+            } else {
+              // Later neighbor swallows our tail — pull the end to its start.
+              if (oS < newEnd) newEnd = oS;
+            }
+          }
+          if (newEnd - newStart < 0.02) {
+            // Target region fully occupied — revert the move (mirrors the validation revert
+            // below) rather than emit a sliver or an overlap.
+            element.setStart(prevStart);
+            element.setEnd(prevEnd);
+            console.warn('[Timeline] Caption move rejected: target region is occupied');
+          } else {
+            if (newStart !== s0) element.setStart(newStart);
+            if (newEnd !== e0) element.setEnd(newEnd);
+          }
+        }
+
         if (patch.props != null) element.setProps(patch.props);
         if (patch.t != null) (element as any).setText?.(patch.t);
         if (patch.position != null) element.setPosition(patch.position);

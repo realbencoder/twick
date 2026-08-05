@@ -418,7 +418,9 @@ export class Track {
           // NOTE: do NOT collision-guard here — updateElement is the single funnel for ALL element
           // mutations (props/text/transitions, not just drag), so a collision throw would silently
           // break style/text edits on any pre-existing overlap (e.g. "Apply style to all subtitles").
-          // Overlap PREVENTION belongs at the drag-clamp layer (sorted neighbors), not the model funnel.
+          // Overlap PREVENTION belongs at the drag-clamp layer (sorted neighbors) and at the
+          // updateElements commit seam (timeline.editor.ts) for caption TIME patches — see S7.
+          // Never re-add funnel-level rejection here to "fix" the apparent gap.
           this.sortElements();
           return true;
         }
