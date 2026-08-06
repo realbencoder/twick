@@ -250,8 +250,10 @@ export const TrackElementView = memo(({
   // waveform (window.__twick_waveform) as mirrored bars along the bottom of the clip. Split-aware:
   // the slice starts at props.time (source offset), so a split/trimmed clip shows ITS audio, not
   // the start of the file. Redraws on trim/drag/zoom via the position/parentWidth deps (cheap —
-  // a few hundred rects). If the app registers the waveform AFTER mount (async video load), the
-  // 'twick-waveform-ready' event triggers the first paint.
+  // a few hundred rects). The 'twick-waveform-ready' listener stays attached even after a
+  // successful paint: the app registers the waveform in TIERS (instant 50/sec from the DB, then
+  // an async 300/sec HD artifact from S3) and re-dispatches on each swap — an early-return after
+  // the first paint would leave every already-painted clip on the low-res tier forever.
   const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
   const showWaveform = isMainVideoTrack && element.getType() === "video";
   // Read the source offset at RENDER time so it participates in the draw-effect deps. A start-edge
@@ -293,7 +295,7 @@ export const TrackElementView = memo(({
         dpr,
       });
     };
-    if (draw()) return;
+    draw();
     const onReady = () => {
       draw();
     };
