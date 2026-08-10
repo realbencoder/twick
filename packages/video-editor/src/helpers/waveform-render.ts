@@ -22,6 +22,14 @@
 export interface TimelineWaveform {
   /** One 0-255 max-amplitude value per bucket (decoded from the stored base64). */
   peaks: Uint8Array;
+  /**
+   * Phase 6 dB display array (2026-08-09), when the host app has one for this video: per-bucket
+   * peak dBFS quantized [DB_DISPLAY_FLOOR, 0] → 0–255, ABSOLUTE (never per-clip normalized),
+   * parallel to `peaks`. When present the bars draw from THIS array — dB is already the
+   * perceptual scale, so the linear path's displayNorm + GAMMA compensations don't apply.
+   * Videos processed before the host app shipped it simply lack it (linear path unchanged).
+   */
+  dbPeaks?: Uint8Array;
   /** Effective buckets per second of source time. */
   peaksPerSecond: number;
   /** Source duration the peaks cover, in seconds. */
@@ -68,6 +76,36 @@ const BAR_CSS_WIDTH = 2; // px bar
 const GAP_CSS_WIDTH = 1; // px hairline gap
 const GAMMA = 0.65; // perceptual lift for quiet-mid detail
 const MIN_BAR = 1; // px — a faint center tick even in silence keeps the strip continuous
+
+/**
+ * Phase 6 dB display (2026-08-09) — "the timeline stops hiding quiet speech".
+ *
+ * The linear peaks put −32…−48 dBFS — exactly where word tails and quiet speech live — into six
+ * integer values, so −35 dB speech drew at 4/255: visually identical to silence on the strip the
+ * founder edits by. `dbPeaks` maps [−70, 0] dBFS linearly onto 0–255, so bar height IS dB:
+ * −35 dB speech sits at half height, room tone reads low but visible, digital silence stays flat.
+ *
+ * No displayNormFactor and no GAMMA on this path — both are compensations for linear-domain
+ * crushing (the norm re-references the file's loudest sample; gamma lifts quiet mids), and dB
+ * already does that job. Stacking them on top of a log scale would draw room tone at speech
+ * height.
+ */
+const DB_DISPLAY_FLOOR = -70; // dBFS quantized to byte 0 by the host app's generator
+
+/**
+ * Bar height fraction (0..1) for one aggregated dB byte, with the clip's volume slider applied
+ * as a dB SHIFT (gain 2 ≈ +6 dB ≈ +22 byte-units) rather than a linear multiply — multiplying a
+ * log-domain value by gain would be unit nonsense. PURE, exported for tests.
+ *
+ * Byte 0 means at-or-below the −70 dBFS floor: measured silence. It stays flat at ANY gain — a
+ * volume boost must never draw silence as audio.
+ */
+export function dbBarFraction(dbByte: number, gain: number): number {
+  if (!(gain > 0) || !(dbByte > 0)) return 0;
+  const shift = (255 / -DB_DISPLAY_FLOOR) * 20 * Math.log10(gain);
+  const v = dbByte + shift;
+  return v <= 0 ? 0 : v >= 255 ? 1 : v / 255;
+}
 
 /**
  * DISPLAY normalization (2026-08-06) — the fix for "the strip reads flat where I'm clearly
@@ -178,9 +216,15 @@ export function drawClipWaveform(
   ctx.fillStyle = opts.color ?? "rgba(255,255,255,0.78)";
   // Clip volume as linear gain — bars mirror the user's volume slider (0 = flat, >1 = taller).
   const gain = Math.max(0, opts.gain ?? 1);
+  // Phase 6: draw from the dB array when the host app provided one (see DB_DISPLAY_FLOOR above).
+  // Length-mismatch means a corrupt payload — fall back to the linear path rather than guessing
+  // at an index mapping.
+  const db =
+    wf.dbPeaks instanceof Uint8Array && wf.dbPeaks.length === wf.peaks.length ? wf.dbPeaks : null;
   // Rescale against the file's 95th percentile instead of its single loudest sample, so ordinary
   // speech fills the track instead of being crushed by one loud moment (see DISPLAY_* above).
-  const displayNorm = displayNormFactor(wf.peaks);
+  // Linear path only — the dB mapping is its own perceptual reference.
+  const displayNorm = db ? 1 : displayNormFactor(wf.peaks);
 
   const roundRect =
     typeof (ctx as CanvasRenderingContext2D & { roundRect?: unknown }).roundRect === "function";
@@ -195,20 +239,21 @@ export function drawClipWaveform(
     if (b0 < 0) b0 = 0;
     if (b1 > wf.peaks.length) b1 = wf.peaks.length;
 
+    const src = db ?? wf.peaks;
     let peak = 0;
     for (let b = b0; b < b1; b++) {
-      const v = wf.peaks[b];
+      const v = src[b];
       if (v > peak) peak = v;
     }
 
-    // Perceptual gamma so quiet-mid speech stays visible; mirrored half-height.
-    // Gain applied pre-gamma so the bars track the clip's EFFECTIVE loudness (clamped at unity),
-    // and displayNorm ahead of it so the strip is referenced to typical speech, not the one
-    // loudest sample in the file.
-    const half = Math.max(
-      MIN_BAR / 2,
-      Math.pow(Math.min(1, (peak / 255) * displayNorm * gain), GAMMA) * halfMax
-    );
+    // dB path: height IS dB (linear over [−70, 0]), volume applied as a dB shift.
+    // Linear path: perceptual gamma so quiet-mid speech stays visible; gain applied pre-gamma so
+    // the bars track the clip's EFFECTIVE loudness (clamped at unity), and displayNorm ahead of
+    // it so the strip is referenced to typical speech, not the one loudest sample in the file.
+    const frac = db
+      ? dbBarFraction(peak, gain)
+      : Math.pow(Math.min(1, (peak / 255) * displayNorm * gain), GAMMA);
+    const half = Math.max(MIN_BAR / 2, frac * halfMax);
     const x = i * stride;
     const y = mid - half;
     const h = half * 2;
