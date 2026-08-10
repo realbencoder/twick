@@ -1633,3 +1633,10 @@ video::-webkit-media-controls-panel {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-neutral-500);
 }
+/* Text panel content area — multiline (Enter = new line) */
+.text-panel-textarea {
+  resize: vertical;
+  min-height: 4.5rem;
+  line-height: 1.4;
+  font-family: inherit;
+}

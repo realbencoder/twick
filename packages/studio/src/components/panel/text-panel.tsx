@@ -96,12 +96,15 @@ export function TextPanel({
       <div className="panel-title">Text</div>
       {/* Text Content */}
       <div className="flex panel-section">
-        <input
-          type="text"
+        {/* textarea, not input: Enter authors a real line break. The renderers
+            (preview + server, via the shared text-layout twins) honour \n and
+            word-wrap at the element width, so what you type here is what draws. */}
+        <textarea
           value={textContent}
           placeholder="Sample"
+          rows={3}
           onChange={(e) => setTextContent(e.target.value)}
-          className="input-dark"
+          className="input-dark text-panel-textarea"
         />
       </div>
 

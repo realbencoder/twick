@@ -172,7 +172,12 @@ export const useTextPanel = ({
     textElement.setFill(nextState.textColor);
     textElement.setStrokeColor(nextState.strokeColor);
     textElement.setLineWidth(nextState.strokeWidth);
-    textElement.setTextAlign(DEFAULT_TEXT_PROPS.textAlign);
+    // PRESERVE the element's current alignment: the Typography panel
+    // (text-props.tsx) is the one alignment control, and resetting to the
+    // default here silently clobbered it on every font/size/colour edit.
+    textElement.setTextAlign(
+      textElement.getProps()?.textAlign ?? DEFAULT_TEXT_PROPS.textAlign
+    );
 
     const nextProps = { ...textElement.getProps() };
 
