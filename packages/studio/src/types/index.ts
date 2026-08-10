@@ -58,7 +58,15 @@ export interface CaptionEntry {
  * Caption entry used by Studio UI list rendering.
  * `isCustom` indicates whether this caption overrides track defaults.
  */
-export type CaptionPanelEntry = CaptionEntry & { isCustom?: boolean };
+export type CaptionPanelEntry = CaptionEntry & {
+  /**
+   * Stable element id (survives serialize/deserialize — element-deserializer re-applies
+   * json.id). The panel is id-addressed everywhere: index addressing corrupts the wrong
+   * element the moment a split/undo/ripple renumbers the list under a stale view.
+   */
+  id: string;
+  isCustom?: boolean;
+};
 
 /**
  * Response from POST /generate-captions

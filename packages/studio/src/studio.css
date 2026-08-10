@@ -208,6 +208,23 @@ html {
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
 }
 
+.captions-panel-item {
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+/* Timeline selection — the explicit "this one" highlight */
+.captions-panel-item-selected {
+  border-color: var(--brand-500, #f97316);
+  background: rgba(249, 115, 22, 0.08);
+}
+
+/* Playhead — the ambient "you are here" accent (selection wins visually) */
+.captions-panel-item-active:not(.captions-panel-item-selected) {
+  border-left: 3px solid var(--brand-500, #f97316);
+  padding-left: calc(0.75rem - 2px);
+}
+
 .captions-panel-item-header {
   display: flex;
   align-items: center;

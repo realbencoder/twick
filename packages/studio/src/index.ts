@@ -188,6 +188,10 @@ export {
 export * from "./helpers/generate-captions.service";
 export * from "./helpers/export-project-bundle";
 export * from "./helpers/constant";
+// Pure caption-sync helpers (active-cue resolution, follow policy, scroll math) —
+// exported so the app's unit suite can pin them against the vendored dist (the fork
+// itself has no test runner).
+export * from "./helpers/caption-sync";
 export * from "./types";
 export type {
   CloudUploadProvider,
