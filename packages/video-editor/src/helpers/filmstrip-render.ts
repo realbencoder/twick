@@ -8,6 +8,8 @@
  * thumbnail extractor — this can NEVER taint a canvas or fail on a CORS-less CDN response.
  */
 
+import { backingStoreFor } from "./backing-store";
+
 export interface FilmstripMeta {
   interval: number; // seconds of SOURCE time between adjacent tiles
   tileW: number;
@@ -185,11 +187,13 @@ export function drawClipFilmstrip(
   // the clip but not the canvas → the filmstrip only covered the left and the rest went bare. The
   // waveform canvas avoids exactly this — it also sets only canvas.width/height and lets CSS drive
   // display size. (Guard the assignment so an unchanged size doesn't needlessly re-clear.)
-  const bw = Math.max(1, Math.round(widthPx * dpr));
-  const bh = Math.max(1, Math.round(heightPx * dpr));
+  // CLAMPED (SILENCE-CARRYOVER.md §6b): an unclamped `widthPx * dpr` blows the browser's canvas
+  // cap at deep zoom — silent blank strip — and reallocates a huge store every zoom step. The
+  // transform derives from the real store/CSS ratio so a clamped store still maps correctly.
+  const { pxW: bw, pxH: bh, scaleX, scaleY } = backingStoreFor(widthPx, heightPx, dpr);
   if (canvas.width !== bw) canvas.width = bw;
   if (canvas.height !== bh) canvas.height = bh;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
   ctx.clearRect(0, 0, widthPx, heightPx);
 
   const frameAspect = meta.tileW / (meta.tileH || 1);

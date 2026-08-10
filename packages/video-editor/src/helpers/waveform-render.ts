@@ -19,6 +19,8 @@
  * Pure drawing — no React. The component owns when to (re)draw.
  */
 
+import { backingStoreFor } from "./backing-store";
+
 export interface TimelineWaveform {
   /** One 0-255 max-amplitude value per bucket (decoded from the stored base64). */
   peaks: Uint8Array;
@@ -190,16 +192,22 @@ export function drawClipWaveform(
   const ctx = canvas.getContext("2d");
   if (!ctx) return false;
 
-  // Retina backing store; draw in CSS-px coordinates.
-  const pxW = Math.max(1, Math.round(cssWidth * dpr));
-  const pxH = Math.max(1, Math.round(cssHeight * dpr));
+  // Retina backing store, CLAMPED (SILENCE-CARRYOVER.md §6b — an unclamped `cssWidth * dpr`
+  // exceeds the browser's canvas cap at deep zoom and silently yields a blank white strip, and
+  // even under the cap reallocates a huge store on every zoom step). Draw in CSS-px coordinates;
+  // the transform derives from the REAL store/CSS ratio, so a clamped store still maps correctly.
+  const { pxW, pxH, scaleX, scaleY } = backingStoreFor(cssWidth, cssHeight, dpr);
   if (canvas.width !== pxW) canvas.width = pxW;
   if (canvas.height !== pxH) canvas.height = pxH;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
   ctx.clearRect(0, 0, cssWidth, cssHeight);
 
   const stride = BAR_CSS_WIDTH + GAP_CSS_WIDTH;
-  const barCount = Math.max(1, Math.floor(cssWidth / stride));
+  // Never lay out more bars than the (possibly clamped) store can distinguish: past the clamp,
+  // extra bars are sub-device-pixel smears that cost a path fill each and display nothing.
+  const barCount = Math.max(1, Math.min(Math.floor(cssWidth / stride), Math.floor(pxW / stride)));
+  // Even spread across the clip (when uncapped this is ≈ stride, the historical layout).
+  const barStride = cssWidth / barCount;
   const secPerBar = srcSpan / barCount;
   const mid = cssHeight / 2;
   const halfMax = mid - 0.5;
@@ -254,7 +262,7 @@ export function drawClipWaveform(
       ? dbBarFraction(peak, gain)
       : Math.pow(Math.min(1, (peak / 255) * displayNorm * gain), GAMMA);
     const half = Math.max(MIN_BAR / 2, frac * halfMax);
-    const x = i * stride;
+    const x = i * barStride;
     const y = mid - half;
     const h = half * 2;
 
