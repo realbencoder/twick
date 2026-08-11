@@ -14,26 +14,10 @@ import { useMemo } from "react";
 import { DRAG_TYPE } from "../helpers/constants";
 import type { DropTarget } from "../utils/drop-target";
 
+import { planSeamGiveBack, resolveSourceDuration } from "../helpers/seam-give-back";
+
 /** One frame at 30fps — the least source a clip can keep and still show a real picture. */
 const MIN_SOURCE_TAIL = 1 / 30;
-
-/**
- * How many seconds of SOURCE this clip has, or 0 when unknown.
- *
- * Two places carry it and neither covers every clip. `props.fileDuration` is written by the app for
- * the main recording and SURVIVES a project reload (props serialize). `mediaDuration` is set by
- * updateVideoMeta() when any video/audio element is added and covers stock B-roll and music, but it
- * is a class field that does NOT serialize — so it is present for the rest of the session and gone
- * after a reload. Reading both means a clip is clamped whenever we know its length, and falls back
- * to today's unclamped behaviour when we genuinely don't (never a wrong clamp).
- */
-const resolveSourceDuration = (element: TrackElement): number => {
-  const fromProps = Number((element.getProps?.() as any)?.fileDuration);
-  if (Number.isFinite(fromProps) && fromProps > 0) return fromProps;
-  const fromMeta = Number((element as any).getMediaDuration?.());
-  if (Number.isFinite(fromMeta) && fromMeta > 0) return fromMeta;
-  return 0;
-};
 
 export interface ElementDropParams {
   element: TrackElement;
@@ -220,14 +204,41 @@ export const useTimelineManager = (): TimelineManagerReturn => {
         clampedEnd = totalDuration;
       }
     }
+    // GIVE-BACK (design: docs/EXTEND-AFTER-CUT-DESIGN.md). On the contiguous main track the end
+    // handle used to clamp dead against the neighbour's start, so a clip could never be dragged
+    // back out to recover footage a ripple cut removed. `planSeamGiveBack` caps the growth at the
+    // seam budget — `inPoint(next) - outPoint(clip)`, exactly what was removed, so the clip can
+    // never reveal a frame the neighbour also shows — and returns the ONE batch that grows this
+    // clip and slides every follower right by the same amount.
+    //
+    // It is PURE and it VERIFIES its own projection (no overlap, no negative duration, no reading
+    // past the file) before returning; a refusal is `null`, which falls through to the ordinary
+    // single-element trim below. That is deliberate: `updateElements` mutates `currentData.tracks`
+    // live with no clone, unlike rippleDeleteRanges/reorderMainTrackElement which commit
+    // all-or-nothing off a deep copy, so the check has to happen before the first mutation.
+    let seamPlan: ReturnType<typeof planSeamGiveBack> = null;
+    if (dragType === DRAG_TYPE.END && clampedEnd > element.getEnd()) {
+      try {
+        seamPlan = planSeamGiveBack(tracks, element.getId(), clampedEnd);
+        if (seamPlan) clampedEnd = seamPlan.clampedEnd;
+      } catch (err) {
+        // Never break a trim over an enhancement — fall back to today's clamp (#26: not silent).
+        console.error("[give-back] seam plan failed (ordinary trim applied):", err);
+        seamPlan = null;
+      }
+    }
     // The trim and the caption cleanup below are ONE gesture, so they must be ONE undo entry.
     // updateElements snapshotted here and the caption cleanup then mutated tracks under a bare
     // refresh() (no snapshot), so the recorded history and the live timeline disagreed about which
     // captions existed (audit 2026-08-04, R2-25).
     editor.batchHistory(() => {
-    editor.updateElements([
-      { elementId: element.getId(), updates: { s: clampedStart, e: clampedEnd } },
-    ]);
+    // One batch either way — the give-back's follower shift rides the SAME commit as the growth, so
+    // the whole gesture is one undo entry and one autosave (the batchHistory contract).
+    editor.updateElements(
+      seamPlan
+        ? seamPlan.updates
+        : [{ elementId: element.getId(), updates: { s: clampedStart, e: clampedEnd } }]
+    );
     // When shortening a video element's end, trim/remove subtitle elements past the new video end.
     // Subtitles are time-synced to the video — if the video is shorter, subtitles past the end
     // should not remain on the timeline.

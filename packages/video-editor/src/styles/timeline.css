@@ -175,6 +175,34 @@
   right: -2px;
 }
 
+/* GIVE-BACK: this end handle has removed footage to reclaim past the seam. A distinct colour is
+   the whole point — a handle that moves at some seams and not others with no visual difference is
+   indistinguishable from the dead handle it replaced. Green reads "there is more here", against
+   the orange every handle turns on hover. */
+.twick-track-element-handle-reclaim {
+  background-color: #4ade80;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.twick-track-element-handle-reclaim:hover {
+  background-color: #22c55e;
+}
+
+/* The footage still available to take back, drawn over the neighbour it would push right. Drains
+   to nothing as the drag consumes it. Never interactive — the handle is the control. */
+.twick-track-element-reclaim-band {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(74, 222, 128, 0.26) 0px,
+    rgba(74, 222, 128, 0.26) 5px,
+    rgba(74, 222, 128, 0.1) 5px,
+    rgba(74, 222, 128, 0.1) 10px
+  );
+  border: 1px dashed rgba(74, 222, 128, 0.85);
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+}
+
 .twick-track-element-frame-effect {
   position: absolute;
   flex: 1;

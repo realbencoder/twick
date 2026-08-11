@@ -67,6 +67,28 @@ export type { PlayerControlsProps, VideoEditorProps, VideoEditorConfig, Timeline
 
 export { throttle, debounce } from "./helpers/function.utils";
 export { clearFilmstripCache } from "./helpers/filmstrip-render";
+// Give-back drag (extend a clip after a cut). Exported as PURE functions so the host app can pin
+// the seam-budget arithmetic and the round-trip against the shipped dist — the same artifact the
+// editor runs, so the test doubles as proof the dist was actually rebuilt.
+export {
+  planSeamGiveBack,
+  reclaimableSeconds,
+  seamSourceBudget,
+  endHandleLimit,
+  endHandleSnapTargets,
+  reclaimAffordance,
+  outPointOf,
+  inPointOf,
+  normalizeSrc,
+  resolveSourceDuration,
+  MAIN_TRACK_NAME,
+} from "./helpers/seam-give-back";
+export type {
+  SeamGiveBackPlan,
+  SeamElementLike,
+  SeamTrackLike,
+  ReclaimAffordance,
+} from "./helpers/seam-give-back";
 // Constants and configurations
 export { ANIMATIONS, TEXT_EFFECTS };
 

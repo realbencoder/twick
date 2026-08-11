@@ -4,6 +4,7 @@ import "../../styles/timeline.css";
 import TrackElementView from "./track-element";
 import { ElementColors } from "../../helpers/types";
 import { isMainVideoTrack } from "../../helpers/editor.utils";
+import { reclaimableSeconds } from "../../helpers/seam-give-back";
 import type { TrackElementDragPayload } from "./track-element";
 import type { DropPointer } from "./track-element";
 
@@ -49,6 +50,10 @@ const TrackBase = memo(({
   const trackWidthStyle = `${Math.max(100, duration * zoom * 100)}px`;
 
   const elements = track.getElements();
+  // GIVE-BACK headroom, main track ONLY. Gated before the call, not inside it: a caption track can
+  // carry hundreds of elements and this is O(n log n) per element — the main track holds a handful
+  // of clips, caption tracks would pay for a number they can never use.
+  const isMainTrack = isMainVideoTrack(track);
   return (
     <div
       ref={trackRef}
@@ -71,8 +76,9 @@ const TrackBase = memo(({
           onDragStateChange={onDragStateChange}
           elementColors={elementColors}
           getSnapTargets={getSnapTargets}
-          isMainVideoTrack={isMainVideoTrack(track)}
-          mainTrackElementCount={isMainVideoTrack(track) ? (elements?.length ?? 0) : 0}
+          isMainVideoTrack={isMainTrack}
+          mainTrackElementCount={isMainTrack ? (elements?.length ?? 0) : 0}
+          reclaimSeconds={isMainTrack ? reclaimableSeconds(track, element.getId()) : 0}
           onReorderStateChange={onReorderStateChange}
           locked={(track.getProps() as { locked?: boolean } | undefined)?.locked === true}
           nextStart={

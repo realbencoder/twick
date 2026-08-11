@@ -16,6 +16,11 @@ import {
   pxToSecThreshold,
 } from "@twick/timeline";
 import { ElementColors } from "../../helpers/types";
+import {
+  endHandleLimit,
+  endHandleSnapTargets,
+  reclaimAffordance,
+} from "../../helpers/seam-give-back";
 import { drawClipWaveform, getTimelineWaveform } from "../../helpers/waveform-render";
 import { drawClipFilmstrip, getFilmstripMeta } from "../../helpers/filmstrip-render";
 import { Volume2, VolumeX } from "lucide-react";
@@ -74,6 +79,14 @@ interface TrackElementViewProps {
   locked?: boolean;
   /** Element count on the magnetic main track — reorder never activates with < 2 clips. */
   mainTrackElementCount?: number;
+  /**
+   * TIMELINE seconds this clip may reclaim past `nextStart` — the footage a ripple cut removed at
+   * this seam (see helpers/seam-give-back.ts). 0 for every clip that cannot give anything back
+   * (the last clip, a different-source neighbour, a pure split seam), which is exactly today's
+   * behaviour. Computed ONCE in track-base from the same function the commit clamps to, so the
+   * tooltip can never advertise headroom the commit refuses.
+   */
+  reclaimSeconds?: number;
   /** Reorder lift/settle notifications (ghost + caret visuals live in timeline-view). */
   onReorderStateChange?: (active: boolean, element?: TrackElement, thumbUrl?: string | null) => void;
 }
@@ -99,6 +112,7 @@ export const TrackElementView = memo(({
   isMainVideoTrack = false,
   locked = false,
   mainTrackElementCount,
+  reclaimSeconds = 0,
   onReorderStateChange,
 }: TrackElementViewProps) => {
   const ref = useRef<HTMLDivElement>(null);
@@ -558,20 +572,28 @@ export const TrackElementView = memo(({
     setPosition((prev) => {
       let raw = (rawEdgeRef.current ?? prev.end) + (dx / parentWidth) * duration;
       raw = Math.max(raw, prev.start + MIN_DURATION);
+      // GIVE-BACK: the neighbour clamp is widened by whatever a ripple cut removed at this seam, so
+      // a clip on the contiguous main track can be dragged back out to reclaim its own removed
+      // footage (helpers/seam-give-back.ts). `reclaimSeconds` is 0 everywhere it doesn't apply, so
+      // this reduces to the original `raw > nextStart → nextStart` clamp by construction.
       // Note: end clamping for overlays is handled in onElementDrag (useTimelineManager)
       // where editor context is available to check track type.
+      const endLimit = endHandleLimit(nextStart, reclaimSeconds);
       if (!allowOverlap) {
-        if (nextStart !== null && raw > nextStart) {
-          raw = nextStart;
+        if (endLimit !== null && raw > endLimit) {
+          raw = endLimit;
         }
       }
       rawEdgeRef.current = raw;
       let newEnd = raw;
-      // Snap the trailing edge for DISPLAY, then re-honor the same clamps.
+      // Snap the trailing edge for DISPLAY, then re-honor the same clamps. The seam target is
+      // dropped while growing past it — see endHandleSnapTargets (must-fix #1: otherwise the handle
+      // snaps straight back and the whole feature is invisible).
       if (snapTargets.length) {
-        let snapped = snapEdgeTime(raw, snapTargets);
+        const targets = endHandleSnapTargets(snapTargets, raw, nextStart, reclaimSeconds);
+        let snapped = targets.length ? snapEdgeTime(raw, targets) : raw;
         snapped = Math.max(snapped, prev.start + MIN_DURATION);
-        if (!allowOverlap && nextStart !== null && snapped > nextStart) snapped = nextStart;
+        if (!allowOverlap && endLimit !== null && snapped > endLimit) snapped = endLimit;
         newEnd = snapped;
       }
       return {
@@ -705,6 +727,23 @@ export const TrackElementView = memo(({
 
   const hasHandles =
     selectedItem?.getId() === element.getId();
+
+  // ── GIVE-BACK AFFORDANCE (must-fix #2 of the design). A handle that silently moves at some seams
+  // and not others — manual split, different-source neighbour, reordered track, ~0 headroom — with
+  // zero visual difference is the same bug in a new costume. So the reclaim state is DRAWN: the end
+  // handle changes colour, its tooltip carries the real number, and a dashed band over the
+  // neighbour shows exactly how much footage is still there to take back. The band measures the
+  // REMAINING budget against the live drag position, so it drains to nothing as you consume it.
+  const {
+    canReclaim,
+    bandPct: reclaimBandPct,
+    label: reclaimTitle,
+  } = reclaimAffordance({
+    reclaimSeconds,
+    nextStart,
+    start: position.start,
+    end: position.end,
+  });
 
   const motionProps: HTMLMotionProps<"div"> = {
     ref,
@@ -854,11 +893,29 @@ export const TrackElementView = memo(({
             ? (element as any).getText()
             : element.getName() || element.getType()}
         </div>
+        {hasHandles && canReclaim && reclaimBandPct > 0 ? (
+          <div
+            className="twick-track-element-reclaim-band"
+            title={reclaimTitle}
+            style={{
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              left: "100%",
+              width: `${reclaimBandPct}%`,
+              zIndex: 4,
+              pointerEvents: "none",
+            }}
+          />
+        ) : null}
         {hasHandles ? (
           <div
             style={{ touchAction: "none", zIndex: isSelected? 100 : 1 }}
             {...bindEndHandle()}
-            className="twick-track-element-handle twick-track-element-handle-end"
+            title={reclaimTitle}
+            className={`twick-track-element-handle twick-track-element-handle-end${
+              canReclaim ? " twick-track-element-handle-reclaim" : ""
+            }`}
           />
         ) : null}
         {(element as any).getFrameEffects
