@@ -39,7 +39,14 @@ export const useStudioManager = () => {
   const selectedElement =
     selectedItem instanceof TrackElement ? selectedItem : null;
 
-  const [selectedTool, setSelectedTool] = useState<string>("none");
+  // Initial tool is "video" (the media panel), NOT "none": the deleted
+  // selection-cleared else-branch used to double as the MOUNT initializer
+  // (selectedItem is null on first render), so removing it alone left the
+  // editor opening on the empty "Select an element from toolbar" placeholder
+  // instead of the media library — found by the fix-commit adversarial pass,
+  // 2026-08-10. The initial value now carries the mount default; the effect
+  // below still never touches the tool on selection CLEAR.
+  const [selectedTool, setSelectedTool] = useState<string>("video");
 
   const isToolChanged = useRef(false);
 
