@@ -6,7 +6,7 @@ import {
   useTimelineContext,
 } from "@twick/timeline";
 import { CAPTION_PROPS } from "../helpers/constant";
-import { mergeEditingText } from "../helpers/caption-sync";
+import { mergeEditingText, shouldCommitCaptionEdit } from "../helpers/caption-sync";
 import type { CaptionPanelEntry } from "../types";
 
 /**
@@ -39,8 +39,15 @@ export const useCaptionsPanel = () => {
   const [cueVersion, setCueVersion] = useState(0);
   const { editor, changeLog, selectedItem, setSelectedItem } = useTimelineContext();
 
-  /** id → in-progress textarea value (uncommitted). */
+  /** id → in-progress textarea value (uncommitted). Written ONLY by updateCaption —
+   *  a mere focus must never create a dirty entry, or a no-edit focus+blur commits
+   *  (junk undo entry + version bump + autosave + FALSE stale-render invalidation
+   *  on an already-rendered video; implementation-review finding, 2026-08-10). */
   const dirtyRef = useRef<Map<string, string>>(new Map());
+  /** id → the element's text at FOCUS time — the no-change comparison baseline.
+   *  Comparing against the live element at blur would be wrong: the 150ms preview
+   *  timer may already have setText'd the dirty value into it. */
+  const baselineRef = useRef<Map<string, string>>(new Map());
   /** id currently holding focus, null when none. */
   const editingRef = useRef<string | null>(null);
   const [editingId, setEditingIdState] = useState<string | null>(null);
@@ -75,19 +82,29 @@ export const useCaptionsPanel = () => {
       setCueVersion((v) => v + 1);
       return;
     }
-    const next: CaptionPanelEntry[] = t.getElements().map((element) => ({
-      id: element.getId(),
-      s: element.getStart(),
-      e: element.getEnd(),
-      t: (element as CaptionElement).getText(),
-      isCustom: (element.getProps() as any)?.useTrackDefaults === false,
-    }));
+    const next: CaptionPanelEntry[] = t
+      .getElements()
+      .map((element) => ({
+        id: element.getId(),
+        s: element.getStart(),
+        e: element.getEnd(),
+        t: (element as CaptionElement).getText(),
+        isCustom: (element.getProps() as any)?.useTrackDefaults === false,
+      }))
+      // activeIndexAt's binary search REQUIRES s-ascending order, and
+      // Track.fromJSON preserves serialized order verbatim — a legacy or
+      // externally-written project can arrive out of order. Sort here, once,
+      // so the panel, the cue index, and follow-scroll all agree.
+      .sort((a, b) => a.s - b.s);
     const ids = new Set(next.map((c) => c.id));
     // A stuck editingId kills playhead-follow for the whole session: when the focused
     // row's element is removed externally (ripple/undo), React unmounts the detached
     // textarea and no blur ever fires. Clear edit state for ids that no longer exist.
     for (const id of Array.from(dirtyRef.current.keys())) {
       if (!ids.has(id)) dirtyRef.current.delete(id);
+    }
+    for (const id of Array.from(baselineRef.current.keys())) {
+      if (!ids.has(id)) baselineRef.current.delete(id);
     }
     if (editingRef.current !== null && !ids.has(editingRef.current)) {
       setEditingId(null);
@@ -210,16 +227,17 @@ export const useCaptionsPanel = () => {
   const finalizeCaptionText = useCallback(
     (id: string) => {
       if (editingRef.current === id) setEditingId(null);
-      if (!dirtyRef.current.has(id)) return; // no edit this session — no empty commit
       if (previewTimerRef.current) {
         clearTimeout(previewTimerRef.current);
         previewTimerRef.current = null;
       }
-      const text = dirtyRef.current.get(id) as string;
+      const hasDirty = dirtyRef.current.has(id);
+      const text = dirtyRef.current.get(id);
+      const baseline = baselineRef.current.get(id);
       dirtyRef.current.delete(id);
+      baselineRef.current.delete(id);
       const element = resolveElement(id);
       if (!element) return; // removed while editing — nothing to commit onto
-      element.setText(text);
       const props = (element.getProps() ?? {}) as Record<string, unknown>;
       const meta = (element.getMetadata?.() ?? {}) as Record<string, unknown>;
       const wordsArr = Array.isArray(props.wordsMs)
@@ -227,20 +245,36 @@ export const useCaptionsPanel = () => {
         : Array.isArray(meta.wordsMs)
         ? (meta.wordsMs as unknown[])
         : null;
-      const wordCount = String(element.getText() ?? "")
+      const wordCount = String(text ?? "")
         .split(" ")
         .map((w) => w.trim())
         .filter((w) => w.length > 0).length;
-      const needsWordResync =
-        !!wordsArr && wordCount > 0 && wordsArr.length !== wordCount;
-      if (needsWordResync) {
+      const decision = shouldCommitCaptionEdit({
+        hasDirty,
+        dirtyText: text,
+        baselineText: baseline,
+        wordsArrLength: wordsArr ? wordsArr.length : null,
+        wordCount,
+      });
+      if (!decision.commit) {
+        // A typed-then-reverted session may have preview-setText'd transient
+        // values; put the baseline back so the element matches what we refuse
+        // to commit (a plain focus+blur never setText'd anything — no-op).
+        if (hasDirty && baseline !== undefined && element.getText() !== baseline) {
+          element.setText(baseline);
+          editor.refresh();
+        }
+        return;
+      }
+      element.setText(text as string);
+      if (decision.resyncWords) {
         editor.adjustCaptionWordsForTimeChange(
           element,
           element.getStart(),
           element.getEnd()
         );
       }
-      editor.updateElement(element); // UNCONDITIONAL on the dirty path
+      editor.updateElement(element); // UNCONDITIONAL on the real-change path
     },
     [editor, resolveElement, setEditingId]
   );
@@ -265,9 +299,11 @@ export const useCaptionsPanel = () => {
   const onEditStart = useCallback(
     (id: string) => {
       setEditingId(id);
-      if (!dirtyRef.current.has(id)) {
+      // Baseline only — NEVER dirty (see the ref docblocks): focus alone is not
+      // an edit, and the no-edit gate in finalize keys off dirty's absence.
+      if (!baselineRef.current.has(id)) {
         const el = resolveElement(id);
-        if (el) dirtyRef.current.set(id, el.getText());
+        if (el) baselineRef.current.set(id, el.getText());
       }
     },
     [resolveElement, setEditingId]

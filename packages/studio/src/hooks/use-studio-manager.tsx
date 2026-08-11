@@ -54,9 +54,13 @@ export const useStudioManager = () => {
       isToolChanged.current = true;
     } else if (selectedItem instanceof Track) {
       // do-nothing
-    } else {
-      setSelectedTool("video");
     }
+    // Selection CLEARED (null): keep the current tool instead of forcing "video".
+    // Auto-switching only on selection SET matches CapCut/Premiere, and forcing
+    // "video" here unmounted the Subtitles panel mid-use on three reachable paths
+    // (delete the last caption, Escape, the right properties panel's close) —
+    // implementation-review finding A2, 2026-08-10. Shared studio behaviour change:
+    // deselecting on the canvas no longer snaps the left panel back to Video.
   }, [selectedItem]);
 
   return {

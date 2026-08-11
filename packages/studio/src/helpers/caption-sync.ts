@@ -128,3 +128,38 @@ export function mergeEditingText<T extends { id: string; t: string }>(
   if (!editingId || dirtyText === undefined) return next;
   return next.map((c) => (c.id === editingId ? { ...c, t: dirtyText } : c));
 }
+
+/**
+ * The blur-commit decision — pure so the app suite can pin every branch (the fork
+ * has no test runner). Inputs are snapshots taken at blur time.
+ *
+ * Rules (each closes a found defect):
+ * - No dirty entry -> no commit (updateCaption never ran this session).
+ * - Dirty text identical to the BASELINE captured at focus -> no commit: a
+ *   focus+blur without a real change must not pollute undo history or bump the
+ *   project version (a version bump triggers autosave, which falsely nulls
+ *   render_status on an already-rendered video — the amber "changed since
+ *   render" banner for zero actual change). Comparing against the live element
+ *   text would be wrong: the 150ms preview timer may have already setText'd the
+ *   dirty value, making them always equal.
+ * - Otherwise commit; resync word timings ONLY when a wordsMs array exists and
+ *   its length no longer matches the word count (the boolean-not-early-return
+ *   shape: manual captions and same-count edits still COMMIT).
+ */
+export function shouldCommitCaptionEdit(i: {
+  hasDirty: boolean;
+  dirtyText: string | undefined;
+  baselineText: string | undefined;
+  wordsArrLength: number | null;
+  wordCount: number;
+}): { commit: boolean; resyncWords: boolean } {
+  if (!i.hasDirty) return { commit: false, resyncWords: false };
+  if (i.baselineText !== undefined && i.dirtyText === i.baselineText) {
+    return { commit: false, resyncWords: false };
+  }
+  const resyncWords =
+    i.wordsArrLength !== null &&
+    i.wordCount > 0 &&
+    i.wordsArrLength !== i.wordCount;
+  return { commit: true, resyncWords };
+}
