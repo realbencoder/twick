@@ -20,6 +20,7 @@ import {
   endHandleLimit,
   endHandleSnapTargets,
   reclaimAffordance,
+  snapFloorForGrowth,
 } from "../../helpers/seam-give-back";
 import { drawClipWaveform, getTimelineWaveform } from "../../helpers/waveform-render";
 import { drawClipFilmstrip, getFilmstripMeta } from "../../helpers/filmstrip-render";
@@ -593,6 +594,11 @@ export const TrackElementView = memo(({
         const targets = endHandleSnapTargets(snapTargets, raw, nextStart, reclaimSeconds);
         let snapped = targets.length ? snapEdgeTime(raw, targets) : raw;
         snapped = Math.max(snapped, prev.start + MIN_DURATION);
+        // Dropping the seam target removed the nearest target; the next survivor can be BEHIND the
+        // seam (the previous clip's end is this clip's start), and the capture radius is pixels, so
+        // at low zoom it is seconds wide. Without this floor a rightward reclaim drag snapped
+        // backward and silently DELETED footage. See snapFloorForGrowth.
+        snapped = snapFloorForGrowth(snapped, raw, nextStart, reclaimSeconds);
         if (!allowOverlap && endLimit !== null && snapped > endLimit) snapped = endLimit;
         newEnd = snapped;
       }
@@ -743,6 +749,7 @@ export const TrackElementView = memo(({
     nextStart,
     start: position.start,
     end: position.end,
+    locked,
   });
 
   const motionProps: HTMLMotionProps<"div"> = {

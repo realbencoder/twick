@@ -78,6 +78,7 @@ export {
   seamSourceBudget,
   endHandleLimit,
   endHandleSnapTargets,
+  snapFloorForGrowth,
   reclaimAffordance,
   outPointOf,
   inPointOf,

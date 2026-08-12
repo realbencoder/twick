@@ -356,6 +356,31 @@ export function endHandleSnapTargets(
   return list.filter((t) => Math.abs(t - nextStart) > SEAM_EPS);
 }
 
+/**
+ * FLOOR A GROWING DRAG AT THE SEAM — the other half of must-fix #1, and it is not optional.
+ *
+ * Dropping the seam target removed the thing that used to be NEAREST whenever the handle was near
+ * the seam. The next surviving target can be far behind it — on a contiguous main track the clip's
+ * own start is in the set as the PREVIOUS clip's end — and `snapEdgeTime`'s capture radius is a
+ * pixel distance, so at low zoom it is seconds wide (10px at 0.01 zoom ≈ 10s). One pixel of
+ * RIGHTWARD drag could therefore snap the end BACKWARD across the seam and commit a SHORTER clip:
+ * measured on C=[100,101] with the previous clip ending at 100, a 1px grow snapped the end to
+ * 100.1. Worse, that commit is not `> element.getEnd()`, so the give-back block never runs, an
+ * ordinary trim writes it, and `closeMainTrackGapsIfNeeded` then ripples the 0.9s loss across every
+ * track — the creator dragged right to reclaim and silently lost footage, in two undo entries.
+ *
+ * A drag that has passed the seam is unambiguously a reclaim gesture, so the seam is its floor.
+ */
+export function snapFloorForGrowth(
+  snapped: number,
+  rawEnd: number,
+  nextStart: number | null,
+  reclaimSeconds: number
+): number {
+  if (!(reclaimSeconds > SEAM_EPS) || nextStart === null || rawEnd <= nextStart) return snapped;
+  return Math.max(snapped, nextStart);
+}
+
 /** What the reclaim affordance draws. See `reclaimAffordance`. */
 export interface ReclaimAffordance {
   /** True when this clip has removed footage to take back — drives the handle's own colour. */
@@ -385,10 +410,18 @@ export function reclaimAffordance(args: {
   nextStart: number | null;
   start: number;
   end: number;
+  /**
+   * A LOCKED track cannot be trimmed at all — `bindEndHandle` returns on its first line. Advertising
+   * a reclaim there is the same must-fix #2 failure in a different costume: the handle turned green,
+   * the dashed band painted over the neighbour, and the tooltip instructed "drag right to take back
+   * up to 1.0s" on a handle that cannot move a pixel (and `.twick-track-element-handle`'s
+   * `cursor: ew-resize` overrides the clip's `not-allowed`, so even the cursor lied).
+   */
+  locked?: boolean;
 }): ReclaimAffordance {
-  const { reclaimSeconds, nextStart, start, end } = args;
+  const { reclaimSeconds, nextStart, start, end, locked } = args;
   const limit = endHandleLimit(nextStart, reclaimSeconds);
-  const canReclaim = reclaimSeconds > SEAM_EPS && limit !== null;
+  const canReclaim = !locked && reclaimSeconds > SEAM_EPS && limit !== null;
   if (!canReclaim) return { canReclaim: false, remaining: 0, bandPct: 0 };
   const remaining = Math.max(0, (limit as number) - end);
   const width = end - start;
@@ -603,9 +636,26 @@ export function planSeamGiveBack(
       // 2. Ends before the seam — the cut never touched it.
       if (e <= seam - SEAM_EPS) continue;
 
-      // 3. Anchored before the seam and reaching it: damaged by the cut, so heal it.
+      // 3. Anchored before the seam and reaching it — heal it, but ONLY with evidence the ripple
+      //    actually damaged it. "It spans the seam" is not evidence: elements added AFTER the cut
+      //    span it too, and lengthening one of those appends content the creator never asked for.
       const abutsOnly = Math.abs(e - seam) <= SEAM_EPS;
-      if (abutsOnly && !hasSplitSignature(el, trackEls[k + 1], trackEls)) continue;
+      if (isTimedMedia(el)) {
+        // The ripple SPLITS timed media spanning a cut (applyRippleToTracks branch D), so a
+        // video/audio element that STILL straddles this seam provably was not produced by this cut
+        // — it was dropped in afterwards. Growing it would append SOURCE the creator trimmed off:
+        // measured live, a 5s B-roll trimmed to source [2,7] and placed over an old seam grew to
+        // read [2,8], resurrecting a second they had deliberately cut. Only the abutting split
+        // pieces are legitimate, and `hasSplitSignature` is exactly that test.
+        if (!hasSplitSignature(el, trackEls[k + 1], trackEls)) continue;
+      } else if (abutsOnly) {
+        // Sourceless (text/image/caption) and merely touching the seam: never shortened, nothing
+        // to give back. A sourceless element that genuinely STRADDLES is healed — it has no source
+        // window to overrun, so the worst case is a window a shade too wide rather than restored
+        // footage. KNOWN LIMIT: a text overlay placed across an old seam is indistinguishable from
+        // one the cut shortened, and gets the same treatment.
+        continue;
+      }
 
       const room = healRoomSeconds(el, trackEls);
       const grow = Math.min(delta, room);
