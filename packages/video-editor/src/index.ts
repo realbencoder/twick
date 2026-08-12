@@ -73,6 +73,8 @@ export { clearFilmstripCache } from "./helpers/filmstrip-render";
 export {
   planSeamGiveBack,
   reclaimableSeconds,
+  reclaimMapForTrack,
+  mainSeamNeighbourStart,
   seamSourceBudget,
   endHandleLimit,
   endHandleSnapTargets,

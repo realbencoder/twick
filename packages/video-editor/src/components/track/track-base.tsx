@@ -1,10 +1,13 @@
-import { memo, useRef } from "react";
+import { memo, useMemo, useRef } from "react";
 import { Track, TrackElement } from "@twick/timeline";
 import "../../styles/timeline.css";
 import TrackElementView from "./track-element";
 import { ElementColors } from "../../helpers/types";
 import { isMainVideoTrack } from "../../helpers/editor.utils";
-import { reclaimableSeconds } from "../../helpers/seam-give-back";
+import { reclaimMapForTrack } from "../../helpers/seam-give-back";
+
+/** Shared empty map — a fresh `new Map()` per render would defeat the memo for every other track. */
+const EMPTY_RECLAIM: ReadonlyMap<string, number> = new Map<string, number>();
 import type { TrackElementDragPayload } from "./track-element";
 import type { DropPointer } from "./track-element";
 
@@ -51,9 +54,20 @@ const TrackBase = memo(({
 
   const elements = track.getElements();
   // GIVE-BACK headroom, main track ONLY. Gated before the call, not inside it: a caption track can
-  // carry hundreds of elements and this is O(n log n) per element — the main track holds a handful
-  // of clips, caption tracks would pay for a number they can never use.
+  // carry hundreds of elements and would pay for a number it can never use.
   const isMainTrack = isMainVideoTrack(track);
+  // ONE pass for the whole track, not one per clip. The per-element call re-sorted the track and
+  // re-parsed a URL per sibling — O(n^2) `new URL()` on the exact track Remove Silences fills with
+  // 10-150 clips, and this memo is the only thing standing between that and every render:
+  // `onElementDrag` is re-created on each TimelineManager render and TimelineManager re-renders on
+  // every `currentTime` tick (~20Hz in playback, per-frame during #93 live drag-scrub). Measured
+  // before the hoist: 7.2-10.2ms per pass at 150 clips, 27-42ms at 300.
+  const reclaimByElement = useMemo(
+    () => (isMainTrack ? reclaimMapForTrack(track) : EMPTY_RECLAIM),
+    // `elements` is the frozen view the engine hands out; a new array identity is exactly the
+    // signal that a clip moved, split or was trimmed — i.e. when these budgets can change.
+    [isMainTrack, track, elements]
+  );
   return (
     <div
       ref={trackRef}
@@ -78,7 +92,7 @@ const TrackBase = memo(({
           getSnapTargets={getSnapTargets}
           isMainVideoTrack={isMainTrack}
           mainTrackElementCount={isMainTrack ? (elements?.length ?? 0) : 0}
-          reclaimSeconds={isMainTrack ? reclaimableSeconds(track, element.getId()) : 0}
+          reclaimSeconds={reclaimByElement.get(element.getId()) ?? 0}
           onReorderStateChange={onReorderStateChange}
           locked={(track.getProps() as { locked?: boolean } | undefined)?.locked === true}
           nextStart={

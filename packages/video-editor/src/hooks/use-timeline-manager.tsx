@@ -14,7 +14,11 @@ import { useMemo } from "react";
 import { DRAG_TYPE } from "../helpers/constants";
 import type { DropTarget } from "../utils/drop-target";
 
-import { planSeamGiveBack, resolveSourceDuration } from "../helpers/seam-give-back";
+import {
+  mainSeamNeighbourStart,
+  planSeamGiveBack,
+  resolveSourceDuration,
+} from "../helpers/seam-give-back";
 
 /** One frame at 30fps — the least source a clip can keep and still show a real picture. */
 const MIN_SOURCE_TAIL = 1 / 30;
@@ -218,13 +222,27 @@ export const useTimelineManager = (): TimelineManagerReturn => {
     // all-or-nothing off a deep copy, so the check has to happen before the first mutation.
     let seamPlan: ReturnType<typeof planSeamGiveBack> = null;
     if (dragType === DRAG_TYPE.END && clampedEnd > element.getEnd()) {
+      // TODAY'S CLAMP, captured before the attempt. `clampedEnd` arrives from the view already
+      // WIDENED by the reclaim budget, and nothing else on this path clamps it against the
+      // neighbour — the source clamp above is against the FILE, and the totalDuration clamp is
+      // gated on `!isMainVideo`. So a refusal has to restore it explicitly. Without this the
+      // "falls through to the ordinary trim" promise was false: a plan that declined (one
+      // degenerate zero-duration element anywhere in the project is enough) committed the widened
+      // end on a single element while the neighbour stayed put, overlapping the main track — and
+      // `Track.updateElement` deliberately does not collision-guard, so nothing downstream caught
+      // it (`closeMainTrackGapsIfNeeded` closes gaps, never overlaps).
+      const neighbourStart = mainSeamNeighbourStart(tracks, element.getId());
       try {
         seamPlan = planSeamGiveBack(tracks, element.getId(), clampedEnd);
-        if (seamPlan) clampedEnd = seamPlan.clampedEnd;
       } catch (err) {
         // Never break a trim over an enhancement — fall back to today's clamp (#26: not silent).
         console.error("[give-back] seam plan failed (ordinary trim applied):", err);
         seamPlan = null;
+      }
+      if (seamPlan) {
+        clampedEnd = seamPlan.clampedEnd;
+      } else if (neighbourStart !== null && clampedEnd > neighbourStart) {
+        clampedEnd = neighbourStart;
       }
     }
     // The trim and the caption cleanup below are ONE gesture, so they must be ONE undo entry.
@@ -239,6 +257,21 @@ export const useTimelineManager = (): TimelineManagerReturn => {
         ? seamPlan.updates
         : [{ elementId: element.getId(), updates: { s: clampedStart, e: clampedEnd } }]
     );
+    // Straddling captions need a PIECEWISE word shift (words before the seam stay, words after it
+    // move), which `adjustCaptionWordsForTimeChange` cannot express — it translates or SCALES the
+    // whole array into the new window. This second, props-ONLY patch is how the right numbers land:
+    // `updateElements` applies `patch.props` and only then calls the adjuster, which on an unchanged
+    // duration degrades to a translate by zero. It MUST follow the geometry patch above (which does
+    // change the duration, and would otherwise smear these values), and it rides the same
+    // `batchHistory` so the whole gesture stays one undo entry and one autosave.
+    if (seamPlan && seamPlan.propUpdates.length > 0) {
+      editor.updateElements(
+        seamPlan.propUpdates.map((p) => ({
+          elementId: p.elementId,
+          updates: { props: p.props },
+        }))
+      );
+    }
     // When shortening a video element's end, trim/remove subtitle elements past the new video end.
     // Subtitles are time-synced to the video — if the video is shorter, subtitles past the end
     // should not remain on the timeline.
