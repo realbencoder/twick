@@ -1,4 +1,4 @@
-import { useLivePlayerContext } from "@twick/live-player";
+import { useLivePlayerContext, useLivePlayerTime } from "@twick/live-player";
 import PlayerControls from "./player-controls";
 import { TrackElement, canSplitElement, useTimelineContext } from "@twick/timeline";
 import { usePlayerControl } from "../../hooks/use-player-control";
@@ -21,8 +21,8 @@ const ControlManager = ({
   /** When true, play goes directly Paused→Playing (no Refresh cycle). For external player. */
   skipRefreshCycle?: boolean;
 }) => {
-  const { currentTime, playerState, setSeekTime, setCurrentTime } =
-    useLivePlayerContext();
+  const { playerState, setSeekTime, setCurrentTime } = useLivePlayerContext();
+  const currentTime = useLivePlayerTime();
   const { togglePlayback } = usePlayerControl(skipRefreshCycle);
   const {
     canRedo,

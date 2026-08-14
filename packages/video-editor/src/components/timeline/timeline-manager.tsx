@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useLivePlayerContext } from "@twick/live-player";
+import { useLivePlayerContext, useLivePlayerTime } from "@twick/live-player";
 import { PLAYER_STATE } from "@twick/live-player";
 import SeekControl from "../controls/seek-control";
 import TimelineView from "./timeline-view";
@@ -27,7 +27,8 @@ const TimelineManager = ({
   timelineTickConfigs?: TimelineTickConfig[];
   elementColors?: ElementColors;
 }) => {
-  const { playerState, currentTime } = useLivePlayerContext();
+  const { playerState } = useLivePlayerContext();
+  const currentTime = useLivePlayerTime();
   const { followPlayheadEnabled, editor, videoResolution, setSelectedItem } =
     useTimelineContext();
   const {

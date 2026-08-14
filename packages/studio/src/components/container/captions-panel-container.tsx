@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTimelineContext } from "@twick/timeline";
-import { useLivePlayerContext } from "@twick/live-player";
+import { useLivePlayerTime } from "@twick/live-player";
 import { CaptionsPanel } from "../panel/captions-panel";
 import { useCaptionsPanel } from "../../hooks/use-captions-panel";
 import { activeIndexAt, type CaptionCue } from "../../helpers/caption-sync";
@@ -29,7 +29,7 @@ function CaptionPlayerLink({
   cueVersion: number;
   onActiveChange: (id: string | null) => void;
 }) {
-  const { currentTime } = useLivePlayerContext();
+  const currentTime = useLivePlayerTime();
   const lastIdRef = useRef<string | null>(null);
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useLivePlayerContext } from "@twick/live-player";
+import { useLivePlayerTime } from "@twick/live-player";
 import SeekTrack, { PlayheadState } from "../track/seek-track";
 import { TimelineTickConfig } from "../video-editor";
 
@@ -17,7 +17,7 @@ const SeekControl = ({
   timelineTickConfigs?: TimelineTickConfig[];
   onPlayheadUpdate?: (state: PlayheadState) => void;
 }) => {
-  const { currentTime } = useLivePlayerContext();
+  const currentTime = useLivePlayerTime();
   return (
     <SeekTrack
       duration={duration}

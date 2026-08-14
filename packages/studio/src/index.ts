@@ -314,7 +314,8 @@ export type {
 export { 
   LivePlayerProvider, 
   LivePlayer,
-  useLivePlayerContext
+  useLivePlayerContext,
+  useLivePlayerTime
 } from "@twick/live-player";
 
 /**
@@ -424,6 +425,17 @@ export {
   TIMELINE_ACTION,
   PROCESS_STATE
 } from "@twick/timeline";
+
+/**
+ * Text panel internals — exported so the HOST APP can test the starred-preset seeding against the
+ * SHIPPED DIST rather than against a marker string.
+ *
+ * This exists because a marker test pinned the `window.__twick_default_text_style` bridge's
+ * PRESENCE and stayed green for the entire time the bridge was INERT: the mount effect reset every
+ * seeded value to stock defaults one render later, so the feature never worked and nothing noticed.
+ * A behavioural test needs the real hook, so the real hook is exported.
+ */
+export { useTextPanel, DEFAULT_TEXT_PROPS } from "./hooks/use-text-panel";
 
 /**
  * Default export: TwickStudio (full editor component)

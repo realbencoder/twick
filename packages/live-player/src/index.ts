@@ -33,4 +33,4 @@ export { getBaseProject, generateId } from "./helpers/player.utils";
 export { LivePlayer } from "./components/live-player";
 
 // Hooks and Context
-export { LivePlayerProvider, useLivePlayerContext } from "./context/live-player-context";
+export { LivePlayerProvider, useLivePlayerContext, useLivePlayerTime } from "./context/live-player-context";
