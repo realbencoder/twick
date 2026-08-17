@@ -75,14 +75,57 @@ export interface StripWindowInput {
 }
 
 export interface StripWindow {
-  /** Offset of the visible slice within the clip, as a fraction of clip width (0..1). */
+  /** Offset of the DRAWN slice within the clip, as a fraction of clip width (0..1). Includes overscan. */
   leftFrac: number;
-  /** Width of the visible slice, as a fraction of clip width (0..1]. */
+  /** Width of the DRAWN slice, as a fraction of clip width (0..1]. Includes overscan. */
   widthFrac: number;
-  /** Visible slice start, absolute TIMELINE seconds. */
+  /** Drawn slice start, absolute TIMELINE seconds. Includes overscan. */
   startSec: number;
-  /** Visible slice end, absolute TIMELINE seconds. */
+  /** Drawn slice end, absolute TIMELINE seconds. Includes overscan. */
   endSec: number;
+  /**
+   * The genuinely on-screen slice, absolute TIMELINE seconds, WITHOUT overscan, clamped to the
+   * clip. This is what `stripNeedsRedraw` tests against the previously drawn range — the whole
+   * point of overscan is that a scroll inside it needs no new raster.
+   */
+  visibleStartSec: number;
+  visibleEndSec: number;
+}
+
+/**
+ * Should this strip be re-rasterised, given what is already on its canvas?
+ *
+ * WHY THIS EXISTS. Before windowing, scrolling caused ZERO canvas work. Windowing added a redraw
+ * per scroll frame per visible clip, and MEASURED in headless Chromium (two independent agents,
+ * against a no-subscription control, with must-fail controls): 150 clips went 120 -> 59 fps at 1x
+ * CPU, and 65-78% of those redraws were REDUNDANT — the canvas already covered the new viewport.
+ * The overscan was buying slack that nothing spent.
+ *
+ * The test is NOT "did the window change" — it changes on every scrolled pixel. It is "has the
+ * on-screen slice left the range we already drew". With one viewport of overscan each side you can
+ * scroll a full viewport before anything must be re-rastered.
+ *
+ * NUMERIC COMPARISON, NOT STRINGS. An attempt at this using `toFixed()` string keys measured
+ * WORSE than no guard at all — 6% worse on a single clip, 32% worse at 83s — because formatting
+ * two floats per frame per clip costs more than the comparison saves.
+ */
+export function stripNeedsRedraw(drawn: StripWindow | null, next: StripWindow): boolean {
+  if (!drawn) return true;
+  // A tolerance well below one pixel of timeline at any realistic zoom. Without it, float noise in
+  // the px->sec round trip re-triggers a raster on a scroll that did not move.
+  const EPS = 1e-6;
+  // The on-screen slice must still sit inside what we rasterised.
+  if (next.visibleStartSec < drawn.startSec - EPS) return true;
+  if (next.visibleEndSec > drawn.endSec + EPS) return true;
+  // Guard the SCALE too: same visible range at a different zoom needs a fresh raster at the new
+  // resolution. In practice a zoom change also re-runs the effect (parentWidth is a dep) which
+  // resets the memo, but the effect must not depend on that — a future dep change would silently
+  // leave stale-resolution strips with no error.
+  const drawnSpan = drawn.endSec - drawn.startSec;
+  const nextSpan = next.endSec - next.startSec;
+  if (drawnSpan <= 0 || nextSpan <= 0) return true;
+  if (Math.abs(drawn.widthFrac / drawnSpan - next.widthFrac / nextSpan) > EPS) return true;
+  return false;
 }
 
 /**
@@ -134,8 +177,14 @@ export function computeStripWindow(input: StripWindowInput): StripWindow | null 
   const visLeftPx = Math.max(clipLeftPx, viewLeftPx);
   const visRightPx = Math.min(clipRightPx, viewRightPx);
 
-  // Entirely off screen — caller skips the draw.
+  // Entirely off screen (even counting overscan) — caller skips the draw.
   if (!(visRightPx > visLeftPx)) return null;
+
+  // The genuinely on-screen slice, overscan excluded, clamped to the clip. `stripNeedsRedraw`
+  // tests THIS against the previously drawn range, which is what lets a scroll inside the overscan
+  // cost nothing.
+  const onLeftPx = Math.max(clipLeftPx, scrollLeft);
+  const onRightPx = Math.min(clipRightPx, scrollLeft + viewportWidth);
 
   const leftFrac = (visLeftPx - clipLeftPx) / clipWidthPx;
   const widthFrac = (visRightPx - visLeftPx) / clipWidthPx;
@@ -151,6 +200,10 @@ export function computeStripWindow(input: StripWindowInput): StripWindow | null 
     widthFrac: Math.min(1 - Math.min(1, Math.max(0, leftFrac)), Math.max(0, widthFrac)),
     startSec: visLeftPx / pxPerSec,
     endSec: visRightPx / pxPerSec,
+    // Clamped into the drawn range: when the clip is entirely inside the viewport these collapse
+    // to the clip bounds, so the redraw test is trivially satisfied and a scroll costs nothing.
+    visibleStartSec: Math.max(visLeftPx, Math.min(visRightPx, onLeftPx)) / pxPerSec,
+    visibleEndSec: Math.min(visRightPx, Math.max(visLeftPx, onRightPx)) / pxPerSec,
   };
 }
 

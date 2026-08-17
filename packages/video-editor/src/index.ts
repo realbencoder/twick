@@ -86,6 +86,22 @@ export {
   resolveSourceDuration,
   MAIN_TRACK_NAME,
 } from "./helpers/seam-give-back";
+// Timeline strip windowing. EXPORTED SO THE APP CAN EXECUTE IT, not for app runtime use.
+// An adversarial review landed NINE distinct silent reverts of this feature — including one that
+// made it entirely inert — past a marker test that only string-matched the built bundle. The dist
+// carries its own inlined copy of these functions, so the fork's unit tests were exercising a
+// DIFFERENT copy than the one that ships, and nothing compared them. Exporting them lets the app
+// suite run the shipped arithmetic against real numbers, which is the only thing that closes that
+// hole. Do not remove without replacing the app-side execution test.
+export {
+  computeStripWindow,
+  windowToSourceRange,
+  stripNeedsRedraw,
+  readTimelineViewport,
+  STRIP_OVERSCAN_FACTOR,
+  TIMELINE_SCROLL_SELECTOR,
+} from "./helpers/strip-window";
+export type { StripWindow, StripWindowInput } from "./helpers/strip-window";
 export type {
   SeamGiveBackPlan,
   SeamElementLike,

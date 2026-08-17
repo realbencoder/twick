@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeStripWindow, windowToSourceRange } from "./strip-window";
+import { computeStripWindow, windowToSourceRange, stripNeedsRedraw } from "./strip-window";
 
 /**
  * The failure this file exists to catch (R1): canvas width and source range must change TOGETHER.
@@ -212,5 +212,60 @@ describe("R1 — the window and the source range must describe the SAME slice", 
     const correct = windowToSourceRange(w, { clipStart: 0, sourceStart: 0, rate: 1, spanSpace: "source" });
     const buggyFullSpan = 1454;
     expect(correct.span).toBeLessThan(buggyFullSpan / 10);
+  });
+});
+
+describe("stripNeedsRedraw — the scroll-cost guard", () => {
+  const mk = (o: Partial<any> = {}) =>
+    computeStripWindow({
+      clipStart: 0, clipEnd: 1454, duration: 1454,
+      parentWidth: 1454 * 0.5 * 100, viewportWidth: 1064,
+      overscanPx: 1064, scrollLeft: 36_350, ...o,
+    })!;
+
+  it("redraws when nothing is drawn yet", () => {
+    expect(stripNeedsRedraw(null, mk())).toBe(true);
+  });
+
+  it("does NOT redraw for a scroll that stays inside the overscan — the whole point", () => {
+    const drawn = mk({ scrollLeft: 36_350 });
+    // Half an overscan's worth of scroll. Before this guard every one of these re-rastered.
+    for (const d of [1, 10, 100, 400, 530]) {
+      expect(stripNeedsRedraw(drawn, mk({ scrollLeft: 36_350 + d })), `+${d}px`).toBe(false);
+      expect(stripNeedsRedraw(drawn, mk({ scrollLeft: 36_350 - d })), `-${d}px`).toBe(false);
+    }
+  });
+
+  it("DOES redraw once the visible slice leaves what was drawn", () => {
+    const drawn = mk({ scrollLeft: 36_350 });
+    // Past a full overscan (1064px) the on-screen slice escapes the drawn range.
+    expect(stripNeedsRedraw(drawn, mk({ scrollLeft: 36_350 + 1100 }))).toBe(true);
+    expect(stripNeedsRedraw(drawn, mk({ scrollLeft: 36_350 - 1100 }))).toBe(true);
+  });
+
+  it("redraws when the SCALE changed even if the visible range did not", () => {
+    // Same viewport, different zoom ⟹ the existing raster is at the wrong resolution.
+    const drawn = mk({ parentWidth: 1454 * 0.5 * 100 });
+    const zoomed = mk({ parentWidth: 1454 * 1.0 * 100, scrollLeft: 36_350 });
+    expect(stripNeedsRedraw(drawn, zoomed)).toBe(true);
+  });
+
+  it("a clip fully inside the viewport never needs a scroll redraw", () => {
+    const small = { clipStart: 0, clipEnd: 5, duration: 100, parentWidth: 2000, viewportWidth: 1064, overscanPx: 1064 };
+    const drawn = computeStripWindow({ ...small, scrollLeft: 0 })!;
+    // Scroll anywhere the clip is still visible — the canvas already holds the whole clip.
+    for (const s of [0, 10, 50]) {
+      const next = computeStripWindow({ ...small, scrollLeft: s });
+      if (next) expect(stripNeedsRedraw(drawn, next)).toBe(false);
+    }
+  });
+
+  it("MUST-FAIL CONTROL: a guard that compared the DRAWN range would redraw on every pixel", () => {
+    // The naive version — "did the window change" — is true on every scrolled pixel, which is
+    // exactly the 65-78% redundant redraw the measurement found. Proof the two differ.
+    const a = mk({ scrollLeft: 36_350 });
+    const b = mk({ scrollLeft: 36_351 });
+    expect(a.startSec).not.toBe(b.startSec);        // the window DID change
+    expect(stripNeedsRedraw(a, b)).toBe(false);      // but no redraw is needed
   });
 });
