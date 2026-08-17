@@ -24,6 +24,13 @@ import {
 } from "../../helpers/seam-give-back";
 import { drawClipWaveform, getTimelineWaveform } from "../../helpers/waveform-render";
 import { drawClipFilmstrip, getFilmstripMeta } from "../../helpers/filmstrip-render";
+import {
+  computeStripWindow,
+  windowToSourceRange,
+  readTimelineViewport,
+  STRIP_OVERSCAN_FACTOR,
+  TIMELINE_SCROLL_SELECTOR,
+} from "../../helpers/strip-window";
 import { Volume2, VolumeX } from "lucide-react";
 import "../../styles/timeline.css";
 
@@ -285,10 +292,12 @@ export const TrackElementView = memo(({
     if (!showWaveform) return;
     const canvas = waveformCanvasRef.current;
     if (!canvas) return;
+    let rafId = 0;
+    let cancelled = false;
     const draw = () => {
+      if (cancelled) return false;
       const wf = getTimelineWaveform();
       if (!wf) return false;
-      const srcSpan = Math.max(0, (position.end - position.start) * wfRate);
       // LIVE source start during an in-flight START trim: the commit advances props.time only on
       // release, so drawing from the committed offset showed audio `delta` seconds EARLIER than
       // what plays at each pixel — the silence the user aimed at migrated under the cursor and the
@@ -299,23 +308,85 @@ export const TrackElementView = memo(({
         dragType.current === DRAG_TYPE.START
           ? (position.start - element.getStart()) * wfRate
           : 0;
+      // ── WINDOWING. Size the canvas to the VISIBLE slice of this clip and narrow the source
+      // range to match. Both halves are required: the bar COUNT derives from cssWidth, so a
+      // narrower canvas alone still produces the sparse comb that makes long-clip waveforms
+      // unreadable. See helpers/strip-window.ts for the measurements.
+      const vp = readTimelineViewport(canvas);
+      const win = vp
+        ? computeStripWindow({
+            clipStart: position.start,
+            clipEnd: position.end,
+            duration,
+            parentWidth,
+            scrollLeft: vp.scrollLeft,
+            viewportWidth: vp.viewportWidth,
+            overscanPx: vp.viewportWidth * STRIP_OVERSCAN_FACTOR,
+          })
+        : null;
+      if (vp && !win) {
+        // Entirely off screen — skip the draw. This gate is what keeps scroll-driven redraws
+        // affordable: without it every scroll frame would redraw all N main-track clips.
+        return false;
+      }
+      // No scroller (tests, detached render) ⟹ fall back to today's full-clip behaviour.
+      canvas.style.left = win ? `${win.leftFrac * 100}%` : "0";
+      canvas.style.width = win ? `${win.widthFrac * 100}%` : "100%";
+
+      const { sourceStart, span: srcSpan } = win
+        ? windowToSourceRange(win, {
+            clipStart: position.start,
+            sourceStart: wfSrcTime + liveTrimDelta,
+            rate: wfRate,
+            // SOURCE seconds — the waveform's caller pre-applies the rate. The filmstrip below
+            // wants TIMELINE seconds. Getting this backwards is wrong by exactly the playback
+            // rate, on sped-up clips only.
+            spanSpace: "source",
+          })
+        : {
+            sourceStart: Math.max(0, wfSrcTime + liveTrimDelta),
+            span: Math.max(0, (position.end - position.start) * wfRate),
+          };
+
       // Cap DPR at 2 — retina-crisp without 3x-display overdraw on a long timeline of clips.
       const dpr = Math.min(2, (typeof window !== "undefined" && window.devicePixelRatio) || 1);
       return drawClipWaveform(canvas, wf, {
         gain: wfVolume,
-        srcStart: Math.max(0, wfSrcTime + liveTrimDelta),
+        srcStart: sourceStart,
         srcSpan,
         cssWidth: canvas.clientWidth,
         cssHeight: canvas.clientHeight,
         dpr,
       });
     };
-    draw();
-    const onReady = () => {
-      draw();
+    // rAF-coalesced: scroll and resize both fire far faster than a frame, and a burst must not
+    // queue a redraw each. Mirrors the filmstrip's existing scheduleRedraw.
+    const schedule = () => {
+      if (cancelled || rafId) return;
+      rafId = requestAnimationFrame(() => { rafId = 0; draw(); });
     };
+    draw();
+    const onReady = () => { draw(); };
     window.addEventListener("twick-waveform-ready", onReady);
-    return () => window.removeEventListener("twick-waveform-ready", onReady);
+    // Scroll does not bubble, so subscribe on the scroller itself. Deliberately NOT a prop and
+    // NOT a dep: TrackBase and TrackElementView are both memo'd and every prop is referentially
+    // stable on a pure scroll, so the memo bails today — a scroll prop would defeat it at the
+    // deep boundary where 3 useDrag bindings per clip re-parse their config unguarded.
+    const scroller = canvas.closest(TIMELINE_SCROLL_SELECTOR) as HTMLElement | null;
+    scroller?.addEventListener("scroll", schedule, { passive: true });
+    // The right properties panel is a CONDITIONAL flex sibling, so toggling it changes the
+    // scroller's width with NO resize event and nothing in these deps can notice. The panel
+    // DISAPPEARING is the silent direction: the window stays too narrow and the rightmost
+    // 240-360px of every strip keeps no canvas coverage until the next zoom or window resize.
+    const ro = scroller && typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
+    if (scroller && ro) ro.observe(scroller);
+    return () => {
+      cancelled = true;
+      if (rafId) cancelAnimationFrame(rafId);
+      window.removeEventListener("twick-waveform-ready", onReady);
+      scroller?.removeEventListener("scroll", schedule);
+      ro?.disconnect();
+    };
   }, [showWaveform, element.getId(), position.start, position.end, wfSrcTime, wfRate, wfVolume, parentWidth, duration]);
 
   // Timeline FILMSTRIP: a row of frames across each main-video clip (from the scrub storyboard the
@@ -392,21 +463,57 @@ export const TrackElementView = memo(({
       if (cancelled) return false;
       const meta = getFilmstripMeta();
       if (!meta) return false;
-      const widthPx = canvas!.clientWidth;
-      const heightPx = canvas!.clientHeight;
-      if (widthPx <= 0 || heightPx <= 0) return false;
-      const span = Math.max(0, position.end - position.start);
       // Same live head-trim offset as the waveform (audit T3) — frames crop from the LEFT during
       // an in-flight START drag instead of sliding under the cursor.
       const liveTrimDelta =
         dragType.current === DRAG_TYPE.START
           ? (position.start - element.getStart()) * wfRate
           : 0;
+      // ── WINDOWING (see the waveform above and helpers/strip-window.ts). The frame count caps at
+      // 120 for the whole clip, so on a long clip each 270x480 tile is stretched ~14:1. Narrowing
+      // the canvas AND the span is what restores the intended frame density.
+      const vp = readTimelineViewport(canvas);
+      const win = vp
+        ? computeStripWindow({
+            clipStart: position.start,
+            clipEnd: position.end,
+            duration,
+            parentWidth,
+            scrollLeft: vp.scrollLeft,
+            viewportWidth: vp.viewportWidth,
+            overscanPx: vp.viewportWidth * STRIP_OVERSCAN_FACTOR,
+          })
+        : null;
+      if (vp && !win) return false; // entirely off screen — skip
+      canvas!.style.left = win ? `${win.leftFrac * 100}%` : "0";
+      canvas!.style.width = win ? `${win.widthFrac * 100}%` : "100%";
+
+      const { sourceStart, span } = win
+        ? windowToSourceRange(win, {
+            clipStart: position.start,
+            sourceStart: wfSrcTime + liveTrimDelta,
+            rate: wfRate,
+            // TIMELINE seconds — drawClipFilmstrip multiplies by playbackRate itself (:217).
+            // The waveform above wants SOURCE seconds. This asymmetry is the whole reason
+            // windowToSourceRange takes an explicit space and has no default.
+            spanSpace: "timeline",
+          })
+        : {
+            sourceStart: Math.max(0, wfSrcTime + liveTrimDelta),
+            span: Math.max(0, position.end - position.start),
+          };
+
+      // Measured AFTER the width assignment above — clientWidth must reflect the windowed size,
+      // or the canvas is sized for the whole clip while the source range covers only the slice
+      // (R1 inverted: the sliver's audio stretched across the full clip).
+      const widthPx = canvas!.clientWidth;
+      const heightPx = canvas!.clientHeight;
+      if (widthPx <= 0 || heightPx <= 0) return false;
       const dpr = Math.min(2, (typeof window !== "undefined" && window.devicePixelRatio) || 1);
       drawClipFilmstrip(
         canvas!,
         meta,
-        { sourceStart: Math.max(0, wfSrcTime + liveTrimDelta), span, playbackRate: wfRate, widthPx, heightPx, dpr },
+        { sourceStart, span, playbackRate: wfRate, widthPx, heightPx, dpr },
         scheduleRedraw // STABLE ref → deduped by ensureSheet; rAF coalesces bursts. NEVER a fresh closure.
       );
       return true;
@@ -415,10 +522,16 @@ export const TrackElementView = memo(({
     const onReady = () => { draw(); };
     // Only listen for late registration if the first paint couldn't draw yet (filmstrip not registered).
     if (!drewNow) window.addEventListener("twick-filmstrip-ready", onReady);
+    const scroller = canvas.closest(TIMELINE_SCROLL_SELECTOR) as HTMLElement | null;
+    scroller?.addEventListener("scroll", scheduleRedraw, { passive: true });
+    const ro = scroller && typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleRedraw) : null;
+    if (scroller && ro) ro.observe(scroller);
     return () => {
       cancelled = true;
       if (rafId) cancelAnimationFrame(rafId);
       window.removeEventListener("twick-filmstrip-ready", onReady);
+      scroller?.removeEventListener("scroll", scheduleRedraw);
+      ro?.disconnect();
     };
   }, [showFilmstrip, element.getId(), position.start, position.end, wfSrcTime, wfRate, parentWidth, duration]);
 

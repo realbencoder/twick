@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import "../../styles/timeline.css";
 import TrackHeader from "../track/track-header";
 import TrackBase from "../track/track-base";
@@ -460,7 +460,20 @@ function TimelineView({
   // at the last REAL pre-zoom scroll position; the clamp's own scroll event fires after paint,
   // i.e. after this effect already consumed the ref.
   const lastScrollLeftRef = useRef(0);
-  useEffect(() => {
+  // useLayoutEffect, NOT useEffect — load-bearing for the windowed strip canvases.
+  //
+  // Each main-video clip sizes its filmstrip/waveform canvas to the visible slice, read from this
+  // container's scrollLeft at draw time (helpers/strip-window.ts). React runs ALL layout effects
+  // before ANY passive effect, and within each pass CHILD before PARENT. As a passive effect this
+  // assignment therefore landed AFTER the child draws — so a zoom step drew every strip with the
+  // NEW zoom against the OLD scroll, and the whole timeline flickered one frame per zoom click.
+  // As a layout effect it lands before the draws, pre-paint.
+  //
+  // Do NOT "solve" that by caching the scroll value instead: on zoom-OUT the content shrinks in
+  // the same commit and the browser has already re-clamped scrollLeft to a third value that is
+  // neither the old nor the intended new one — which is exactly why lastScrollLeftRef exists
+  // (see the comment above it).
+  useLayoutEffect(() => {
     const prevZoom = prevZoomRef.current;
     prevZoomRef.current = zoomLevel;
     if (prevZoom === zoomLevel || !containerRef.current) return;
