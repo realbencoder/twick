@@ -242,8 +242,57 @@ function TimelineView({
     return false;
   }, [draggingElementId, tracks]);
 
+  // Drag routing must NOT change identity on a playhead tick — same rule, and the same ref idiom,
+  // as getSnapTargets below (#8 / P1b). TimelineManager re-renders ~20-30x/sec during playback from
+  // TWO independent drivers (its own useLivePlayerTime, and SeekTrack publishing a FRESH object
+  // literal into setPlayheadState, which React can never bail out of), and each of those renders
+  // re-mints the four un-memoized handlers out of useTimelineManager. A fresh onDrag here defeats
+  // React.memo on TrackBase AND on every TrackElementView beneath it — and each TrackElementView
+  // builds THREE useDrag controllers whose applyConfig re-parses unconditionally in the render body
+  // (no dep array, no guard), plus a framer-motion root with three no-dep effects. At 1,571 caption
+  // elements that is ~4,700 controllers rebuilt per tick. MEASURED on a 24-min video: removing the
+  // caption elements entirely took the tab from 200% CPU / 919MB to 20% / 417MB.
+  //
+  // Refs, not a dep list: a dep list silently re-breaks the moment someone adds an unstable entry,
+  // which is exactly how this regressed — five of six props on this boundary were already hardened
+  // deliberately, and onDrag was the one that was missed.
+  //
+  // computeReorderSlot and clearReorderVisuals are mirrored too, NOT just the four handlers. They
+  // are plain functions redefined each render that close over tracks/zoomLevel/duration (see the
+  // createTimeScale call inside computeReorderSlot), and they are deliberately absent from the old
+  // dep array. Freezing this callback WITHOUT mirroring them would pin the first render's closure
+  // forever and silently break drag-to-reorder slot math after any zoom change or edit — a
+  // regression with no error and no visible symptom until a creator drags a clip.
+  const dragRefs = useRef({
+    onElementDrag,
+    onElementDrop,
+    onMainReorder,
+    onMainPinSettle,
+    tracks,
+    computeReorderSlot,
+    clearReorderVisuals,
+  });
+  dragRefs.current = {
+    onElementDrag,
+    onElementDrop,
+    onMainReorder,
+    onMainPinSettle,
+    tracks,
+    computeReorderSlot,
+    clearReorderVisuals,
+  };
+
   const handleDragWithDrop = useCallback(
     (payload: TrackElementDragPayload, dropPointer?: { clientX: number; clientY: number }) => {
+      const {
+        onElementDrag,
+        onElementDrop,
+        onMainReorder,
+        onMainPinSettle,
+        tracks,
+        computeReorderSlot,
+        clearReorderVisuals,
+      } = dragRefs.current;
       // ── EXCLUSIVE main-track MOVE routing (drag-to-reorder). Goes FIRST, before every
       // fallthrough to onElementDrag/onElementDrop: a main-clip MOVE release must never reach
       // updateElements (whose ElementUpdater sets changed=true with no value diff → a spurious
@@ -331,8 +380,10 @@ function TimelineView({
       // cross-track behavior stays as implemented.
       onElementDrop({ ...payload, dropTarget });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [onElementDrag, onElementDrop, onMainReorder, onMainPinSettle, tracks, zoomLevel, duration]
+    // EMPTY, and it must stay empty: every value this reads comes from dragRefs.current, refreshed
+    // on each render above. Adding a dep here re-breaks both memo boundaries and the ~4,700 gesture
+    // controllers beneath them. Pinned by tests/unit/timeline-drag-identity.test.ts in the app repo.
+    []
   );
 
   useEdgeAutoScroll({
