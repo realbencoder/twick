@@ -239,8 +239,14 @@ export function PropertiesPanelContainer({
                       />
                     )}
 
-                    {/* Host-app slot (e.g. saved text style presets) – text only */}
-                    {isText && <HostPanelExtra kind="text" />}
+                    {/* Text presets MOVED to the left Text panel (2026-08-13). Every control that
+                        produces a text style — font, size, colours, stroke, shadow, background —
+                        lives there, so asking a creator to save "this look" from the inspector meant
+                        saving from a panel containing none of the controls that made it. Rendering
+                        it in BOTH is not an option: two TextPresetsSection instances each fetch on
+                        mount and each hold their own `defaultId`, so starring in one would leave the
+                        other showing a stale star. The caption slot below stays — its style controls
+                        and its presets already share this column. */}
 
                     {/* Animations panel REMOVED — the element fade/enter/exit animation
                         props it wrote were a no-op: our WebCodecs editor preview has no

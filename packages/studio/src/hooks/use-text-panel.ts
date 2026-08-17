@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { TextElement, TrackElement, type TextAlign } from "@twick/timeline";
 import { AVAILABLE_TEXT_FONTS } from "@twick/video-editor";
 
+/** Background box default. Outside DEFAULT_TEXT_PROPS because the panel keeps bg in its own state. */
+export const DEFAULT_BACKGROUND_COLOR = "#FACC15";
+
 export const DEFAULT_TEXT_PROPS = {
   text: "Sample",
   fontSize: 48,
@@ -13,6 +16,8 @@ export const DEFAULT_TEXT_PROPS = {
   strokeWidth: 0,
   applyShadow: false,
   shadowColor: "#000000",
+  applyBackground: false,
+  backgroundColor: DEFAULT_BACKGROUND_COLOR,
   textAlign: "center" as TextAlign,
   shadowOffset: [0, 0],
   shadowBlur: 2,
@@ -26,7 +31,13 @@ export const DEFAULT_TEXT_PROPS = {
  * lazily at panel mount so a mid-session change applies to the next panel
  * open. Visual, parity-safe props only (family/size/weight/fill/stroke/
  * strokeWidth); unknown fonts fall back to the stock default so the font
- * <select> never shows a value outside its option list.
+ * <select> never shows a value outside its option list, plus the BACKGROUND box and drop SHADOW.
+ *
+ * Key ABSENCE is meaningful: the host serializes a preset verbatim and never backfills, so a preset
+ * with no `backgroundColor` means the creator wanted NO background — hence `applyBackground` is
+ * driven by presence, not by a default colour. Before this, save-and-apply-to-selected carried
+ * bg/shadow while the auto-seed onto brand-new text silently dropped them, so "my style" meant two
+ * different things depending on how you got there.
  */
 function resolveDefaultTextProps(): typeof DEFAULT_TEXT_PROPS {
   if (typeof window === "undefined") return DEFAULT_TEXT_PROPS;
@@ -38,14 +49,22 @@ function resolveDefaultTextProps(): typeof DEFAULT_TEXT_PROPS {
       fill?: unknown;
       stroke?: unknown;
       strokeWidth?: unknown;
+      backgroundColor?: unknown;
+      shadowColor?: unknown;
     } | null;
   }).__twick_default_text_style;
   if (!preset || typeof preset !== "object") return DEFAULT_TEXT_PROPS;
   const knownFont =
     typeof preset.fontFamily === "string" &&
     (Object.values(AVAILABLE_TEXT_FONTS) as string[]).includes(preset.fontFamily);
+  const hasBg = typeof preset.backgroundColor === "string" && preset.backgroundColor.length > 0;
+  const hasShadow = typeof preset.shadowColor === "string" && preset.shadowColor.length > 0;
   return {
     ...DEFAULT_TEXT_PROPS,
+    applyBackground: hasBg,
+    backgroundColor: hasBg ? (preset.backgroundColor as string) : DEFAULT_TEXT_PROPS.backgroundColor,
+    applyShadow: hasShadow,
+    shadowColor: hasShadow ? (preset.shadowColor as string) : DEFAULT_TEXT_PROPS.shadowColor,
     fontFamily: knownFont ? (preset.fontFamily as string) : DEFAULT_TEXT_PROPS.fontFamily,
     fontSize:
       typeof preset.fontSize === "number" && preset.fontSize > 0
@@ -116,11 +135,11 @@ export const useTextPanel = ({
   const [isItalic, setIsItalic] = useState(DEFAULT_TEXT_PROPS.fontStyle === "italic");
   const [textColor, setTextColor] = useState(initialDefaults.textColor);
   const [strokeColor, setStrokeColor] = useState(initialDefaults.strokeColor);
-  const [applyShadow, setApplyShadow] = useState(DEFAULT_TEXT_PROPS.applyShadow);
-  const [shadowColor, setShadowColor] = useState(DEFAULT_TEXT_PROPS.shadowColor);
+  const [applyShadow, setApplyShadow] = useState(initialDefaults.applyShadow);
+  const [shadowColor, setShadowColor] = useState(initialDefaults.shadowColor);
   const [strokeWidth, setStrokeWidth] = useState(initialDefaults.strokeWidth);
-  const [applyBackground, setApplyBackground] = useState(false);
-  const [backgroundColor, setBackgroundColor] = useState("#FACC15");
+  const [applyBackground, setApplyBackground] = useState(initialDefaults.applyBackground);
+  const [backgroundColor, setBackgroundColor] = useState(initialDefaults.backgroundColor);
   const [backgroundOpacity, setBackgroundOpacity] = useState(1);
 
   const fonts = Object.values(AVAILABLE_TEXT_FONTS);
@@ -325,21 +344,35 @@ export const useTextPanel = ({
         setBackgroundOpacity(textProps.backgroundOpacity ?? 1);
       }
     } else {
+      // RESET TO THE CREATOR'S DEFAULT, NOT THE STOCK ONE.
+      //
+      // This branch runs on MOUNT (deps [selectedElement], nothing selected) and it is the ONLY
+      // state in which new text can be created — with a TextElement selected the Add button is not
+      // rendered (text-panel.tsx) and handleApplyChanges early-returns. Resetting to hardcoded
+      // DEFAULT_TEXT_PROPS therefore wiped every value the useState initialisers had just seeded
+      // from the starred preset, ONE RENDER LATER and before the creator could touch anything — so
+      // the entire `window.__twick_default_text_style` bridge was INERT from the day it shipped
+      // (fork ff076f5). Measured under RTL: render 0 carried the preset, render 1 was stock, and
+      // the created element had none of it. It survived because the dist-marker test pinned the
+      // bridge's PRESENCE, not its EFFECT.
+      //
+      // `initialDefaults` IS DEFAULT_TEXT_PROPS when no preset is starred (resolveDefaultTextProps
+      // returns it verbatim), so this is a no-op for every creator without one.
       setTextContent(DEFAULT_TEXT_PROPS.text);
-      setFontSize(DEFAULT_TEXT_PROPS.fontSize);
-      setSelectedFont(DEFAULT_TEXT_PROPS.fontFamily);
-      setIsBold(DEFAULT_TEXT_PROPS.fontWeight === 700);
+      setFontSize(initialDefaults.fontSize);
+      setSelectedFont(initialDefaults.fontFamily);
+      setIsBold(initialDefaults.fontWeight === 700);
       setIsItalic(DEFAULT_TEXT_PROPS.fontStyle === "italic");
-      setTextColor(DEFAULT_TEXT_PROPS.textColor);
-      setStrokeColor(DEFAULT_TEXT_PROPS.strokeColor);
-      setStrokeWidth(DEFAULT_TEXT_PROPS.strokeWidth);
-      setApplyShadow(DEFAULT_TEXT_PROPS.applyShadow);
-      setShadowColor(DEFAULT_TEXT_PROPS.shadowColor);
-      setApplyBackground(false);
-      setBackgroundColor("#FACC15");
+      setTextColor(initialDefaults.textColor);
+      setStrokeColor(initialDefaults.strokeColor);
+      setStrokeWidth(initialDefaults.strokeWidth);
+      setApplyShadow(initialDefaults.applyShadow);
+      setShadowColor(initialDefaults.shadowColor);
+      setApplyBackground(initialDefaults.applyBackground);
+      setBackgroundColor(initialDefaults.backgroundColor);
       setBackgroundOpacity(1);
     }
-  }, [selectedElement]);
+  }, [selectedElement, initialDefaults]);
 
   return {
     textContent,

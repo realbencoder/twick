@@ -57,6 +57,7 @@
  */
 
 import type { TextPanelState, TextPanelActions } from "../../hooks/use-text-panel";
+import { HostPanelExtra } from "../container/host-panel-extra";
 
 export type TextPanelProps = TextPanelState & TextPanelActions;
 
@@ -311,6 +312,15 @@ export function TextPanel({
           </button>
         </div>
       )}
+
+      {/* Host text-style presets, next to the controls that produce the style — every text control
+          (font, size, colours, stroke, shadow, background) lives in THIS panel, so this is where
+          "save this look" belongs. Deliberately the ONLY copy: it also rendered in the properties
+          inspector, and two mounted instances each fetch on mount and hold their own `defaultId`,
+          so starring in one left the other showing a stale star. */}
+      <div className="panel-section">
+        <HostPanelExtra kind="text" />
+      </div>
     </div>
   );
 }
