@@ -1,10 +1,11 @@
-import React, { useRef, useState, useMemo, useEffect } from "react";
+import React, { useRef, useState, useMemo, useLayoutEffect } from "react";
 import { useDrag } from "@use-gesture/react";
 import "../../styles/timeline.css";
-import { planRulerTicks, formatRulerLabel } from "../../helpers/ruler-ticks";
+import { planRulerTicks, planTickRange, formatRulerLabel } from "../../helpers/ruler-ticks";
 import { readTimelineViewport, TIMELINE_SCROLL_SELECTOR } from "../../helpers/strip-window";
 import { TimelineTickConfig } from "../video-editor";
 import { useTimeScale } from "../../helpers/time-scale";
+
 
 export interface PlayheadState {
   positionPx: number;
@@ -95,7 +96,23 @@ export default function SeekTrack({
   // seek-track is rendered inside. `readTimelineViewport` walks up to it — the same helper the
   // per-clip strip canvases use, so both features window against one definition of "on screen".
   const [rulerViewport, setRulerViewport] = useState<{ scrollLeft: number; width: number } | null>(null);
-  useEffect(() => {
+  // useLayoutEffect, NOT useEffect — measured, and it fixes two visible defects.
+  //
+  // The RENDER that follows a zoom step already has the new pxPerSec but still holds the viewport
+  // measured under the OLD one, so the tick range is computed from mismatched halves. With a
+  // passive effect the browser PAINTS that frame before the correction lands: measured in Chromium
+  // on the 1454s video, zooming while scrolled deeper than ~4 minutes blanked the entire ruler for
+  // one frame on 7 of 8 clicks, so rapid zooming strobed.
+  //
+  // A layout effect runs before paint and its setState re-renders synchronously, so the corrected
+  // frame is the only one shown. The same reasoning covers first paint, where `rulerViewport` is
+  // null and the ruler falls back to the whole duration: that fallback used to be painted once on
+  // every editor open (~582 tick divs at the wrong spacing, replaced by 73 a frame later).
+  //
+  // This does NOT make scrolling synchronous — the effect body runs on mount and on `ts` change
+  // only. Scroll updates arrive through the listener below, outside React's commit, and stay
+  // passive.
+  useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const scroller = el.closest(TIMELINE_SCROLL_SELECTOR) as HTMLElement | null;
@@ -292,22 +309,16 @@ export default function SeekTrack({
   //
   // Scalars, not an object: the range only changes when the window crosses a whole tick, which is
   // what makes the rebuild rate a function of tick spacing rather than of pixels moved.
-  const { firstMinor, lastMinor } = useMemo(() => {
-    const epsilon = 1e-6;
-    const pxPerSecNow = (ts as unknown as { pxPerSec?: number }).pxPerSec || 1;
-    // Overscan one viewport each side so a small scroll never exposes a bare stretch before the
-    // next rebuild lands. Matches STRIP_OVERSCAN_FACTOR next door.
-    const fromT = rulerViewport
-      ? Math.max(0, (rulerViewport.scrollLeft - rulerViewport.width) / pxPerSecNow)
-      : 0;
-    const toT = rulerViewport
-      ? Math.min(duration, (rulerViewport.scrollLeft + rulerViewport.width * 2) / pxPerSecNow)
-      : duration;
-    return {
-      firstMinor: Math.max(0, Math.floor((fromT + epsilon) / minorIntervalSec)),
-      lastMinor: Math.floor((toT + epsilon) / minorIntervalSec),
-    };
-  }, [rulerViewport, ts, duration, minorIntervalSec]);
+  const { firstMinor, lastMinor } = useMemo(
+    () =>
+      planTickRange({
+        duration,
+        pxPerSec: (ts as unknown as { pxPerSec?: number }).pxPerSec || 1,
+        minorIntervalSec,
+        viewport: rulerViewport,
+      }),
+    [rulerViewport, ts, duration, minorIntervalSec],
+  );
 
   const ruler = useMemo(() => {
     const ticks: React.ReactElement[] = [];

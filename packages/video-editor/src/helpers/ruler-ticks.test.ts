@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { chooseTickInterval, formatRulerLabel, MAX_MAJORS, planRulerTicks } from "./ruler-ticks";
+import { chooseTickInterval, formatRulerLabel, MAX_MAJORS, planRulerTicks, planTickRange, RANGE_BLOCK } from "./ruler-ticks";
 
 /** A 24-minute video — the case the founder reported. pxPerSec = 100 * zoom. */
 const LONG = 1454;
@@ -171,4 +171,135 @@ describe('planRulerTicks — the width is the thing that was wrong', () => {
     expect(planRulerTicks({ duration: 100, pxPerSec: 100, viewportWidth: 0 }))
       .toEqual(planRulerTicks({ duration: 100, pxPerSec: 100, viewportWidth: null }));
   });
+})
+
+/**
+ * THE WINDOWING, which had ZERO executed coverage until an adversarial review pointed out that
+ * every test exercised interval SELECTION and none exercised which ticks actually get DRAWN.
+ * Three separate mutations — overscan widened to infinity, overscan zeroed, and the range
+ * hardcoded — all passed the previous suite.
+ */
+describe('planTickRange — which ticks actually get drawn', () => {
+  const DURATION = 1454
+  const VP = 1064
+
+  it('covers the visible band, with a viewport of overscan each side', () => {
+    // Scrolled to 60,000px at 100px/s: visible band is 600s..610.64s.
+    const r = planTickRange({
+      duration: DURATION, pxPerSec: 100, minorIntervalSec: 0.25,
+      viewport: { scrollLeft: 60000, width: VP },
+    })
+    const firstT = r.firstMinor * 0.25
+    const lastT = r.lastMinor * 0.25
+    expect(firstT).toBeLessThanOrEqual(600)        // covers the left edge
+    expect(lastT).toBeGreaterThanOrEqual(610.64)   // covers the right edge
+    // Overscan, not the whole video.
+    expect(firstT).toBeGreaterThan(560)
+    expect(lastT).toBeLessThan(660)
+  })
+
+  it('never leaves a bare strip at any scroll position', () => {
+    // The failure this guards is a ruler with a visibly empty stretch. Sweep the whole timeline.
+    for (let scrollLeft = 0; scrollLeft <= DURATION * 100; scrollLeft += 3137) {
+      const r = planTickRange({
+        duration: DURATION, pxPerSec: 100, minorIntervalSec: 0.25,
+        viewport: { scrollLeft, width: VP },
+      })
+      const visFrom = scrollLeft / 100
+      const visTo = Math.min(DURATION, (scrollLeft + VP) / 100)
+      expect(r.firstMinor * 0.25).toBeLessThanOrEqual(visFrom)
+      expect(r.lastMinor * 0.25).toBeGreaterThanOrEqual(visTo)
+    }
+  })
+
+  it('draws a real overscan margin beyond the visible band', () => {
+    // MUTATION-DRIVEN. Zeroing the overscan left every other test green, because they assert the
+    // window COVERS the visible band and a zero-overscan window still does — exactly. The defect
+    // it misses is dynamic: with no margin, any scroll exposes an undrawn strip before the next
+    // rebuild lands. So assert the margin itself, away from the 0/duration clamps.
+    const minor = 0.25
+    const r = planTickRange({
+      duration: DURATION, pxPerSec: 100, minorIntervalSec: minor,
+      viewport: { scrollLeft: 60000, width: VP },
+    })
+    const visFrom = 60000 / 100
+    const visTo = (60000 + VP) / 100
+    const marginBefore = visFrom - r.firstMinor * minor
+    const marginAfter = r.lastMinor * minor - visTo
+    const oneViewportSec = VP / 100
+    // At least most of a viewport each side (quantisation rounds outward, never inward).
+    expect(marginBefore).toBeGreaterThanOrEqual(oneViewportSec * 0.9)
+    expect(marginAfter).toBeGreaterThanOrEqual(oneViewportSec * 0.9)
+  })
+
+  it('QUANTISES: the range holds still while the window creeps', () => {
+    // The playback fix. Auto-scroll moves the window continuously; without quantisation the range
+    // changed on every tick crossed (up to the 20Hz playhead rate) and the ruler rebuilt each time.
+    const at = (scrollLeft: number) =>
+      JSON.stringify(planTickRange({
+        duration: DURATION, pxPerSec: 200, minorIntervalSec: 0.1,
+        viewport: { scrollLeft, width: VP },
+      }))
+    // One second of playback at 200px/s, sampled at the 20Hz playhead rate. At 0.1s minors that
+    // is 10 ticks crossed, so WITHOUT quantisation the range changes ~10 times; with it, once per
+    // 50-tick block — 0 or 1 times depending on whether this second straddles a boundary.
+    // Asserting exactly 1 was wrong: 2 is the correct answer when it straddles, which is a third
+    // of starting positions.
+    const seen = new Set<string>()
+    for (let i = 0; i < 20; i++) seen.add(at(60000 + i * 10))
+    expect(seen.size).toBeLessThanOrEqual(2)
+
+    // The property that matters is the RATIO against an unquantised range, so this cannot pass by
+    // accident if quantisation is removed.
+    const raw = new Set<string>()
+    for (let i = 0; i < 20; i++) {
+      const scrollLeft = 60000 + i * 10
+      const fromT = Math.max(0, (scrollLeft - VP) / 200)
+      raw.add(String(Math.floor(fromT / 0.1)))
+    }
+    expect(raw.size).toBeGreaterThanOrEqual(10)
+    expect(seen.size * 4).toBeLessThan(raw.size)
+  })
+
+  it('the quantised range is a multiple of RANGE_BLOCK', () => {
+    for (const scrollLeft of [0, 1234, 60000, 290000]) {
+      const r = planTickRange({
+        duration: DURATION, pxPerSec: 200, minorIntervalSec: 0.1,
+        viewport: { scrollLeft, width: VP },
+      })
+      expect(r.firstMinor % RANGE_BLOCK).toBe(0)
+      expect(r.lastMinor % RANGE_BLOCK).toBe(0)
+    }
+  })
+
+  it('MUST-FAIL CONTROL: without windowing the div count is unusable', () => {
+    // Windowing is not polish — it is what permits relaxing the density cap at all.
+    const unwindowed = planTickRange({
+      duration: DURATION, pxPerSec: 200, minorIntervalSec: 0.1, viewport: null,
+    })
+    const windowed = planTickRange({
+      duration: DURATION, pxPerSec: 200, minorIntervalSec: 0.1,
+      viewport: { scrollLeft: 60000, width: VP },
+    })
+    expect(unwindowed.lastMinor - unwindowed.firstMinor).toBeGreaterThan(14000)
+    expect(windowed.lastMinor - windowed.firstMinor).toBeLessThan(400)
+  })
+
+  it('falls back to the whole duration before the first measurement', () => {
+    const r = planTickRange({ duration: 100, pxPerSec: 100, minorIntervalSec: 1, viewport: null })
+    expect(r.firstMinor).toBe(0)
+    expect(r.lastMinor).toBeGreaterThanOrEqual(100)
+  })
+
+  it('never returns a negative or inverted range', () => {
+    for (const v of [
+      { scrollLeft: 0, width: 0 },
+      { scrollLeft: -500, width: 1064 },
+      { scrollLeft: 1e9, width: 1064 },
+    ]) {
+      const r = planTickRange({ duration: DURATION, pxPerSec: 100, minorIntervalSec: 0.25, viewport: v })
+      expect(r.firstMinor).toBeGreaterThanOrEqual(0)
+      expect(r.lastMinor).toBeGreaterThanOrEqual(r.firstMinor)
+    }
+  })
 })

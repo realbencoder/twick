@@ -121,3 +121,81 @@ export function planRulerTicks(input: {
     viewportWidth != null && viewportWidth > 0 ? viewportWidth / safePxPerSec : duration;
   return chooseTickInterval(safePxPerSec, spanSec);
 }
+
+/**
+ * Tick-index quantisation block — see `planTickRange`.
+ *
+ * The rendered range is rounded OUT to a multiple of this so it changes once per block instead of
+ * once per tick. That is what stops playback rebuilding the ruler at the playhead rate: the
+ * timeline auto-scrolls to follow the playhead, and before this the range moved on every tick
+ * crossed. Measured on a 1454s video at 200% zoom: 9.5 ruler rebuilds and ~1,724 tick divs created
+ * per second of playback, where the pre-windowing build did zero ruler work while playing.
+ *
+ * 50 costs at most 100 extra tick divs (against ~110-160 drawn) and they sit OUTSIDE the visible
+ * band, since the overscan already covers a full viewport each side.
+ */
+export const RANGE_BLOCK = 50;
+
+/** Overscan: draw one viewport-width beyond each edge so a small scroll never exposes a bare strip. */
+export const RULER_OVERSCAN_VIEWPORTS = 1;
+
+export interface TickRange {
+  /** First minor-tick INDEX to draw (multiply by minorIntervalSec for its time). */
+  firstMinor: number;
+  /** Last minor-tick index to draw, inclusive. */
+  lastMinor: number;
+}
+
+/**
+ * Which tick indices should the ruler actually render?
+ *
+ * EXTRACTED BECAUSE IT HAD NO EXECUTED COVERAGE. An adversarial review of the first version of
+ * this feature found that every test exercised interval SELECTION and none exercised which ticks
+ * get DRAWN — so the overscan could be deleted, or the range hardcoded, with the whole suite
+ * green. That is the same shape that let a completely inert version of this feature ship past
+ * twelve passing tests: the pure decision was proven, the wiring around it was not.
+ *
+ * Windowing is not a nicety here. It is what permits relaxing the density cap at all: on a 1454s
+ * video at 200% zoom, second-by-second ticks across the full timeline would be 14,540 absolutely
+ * positioned divs. Windowed, it is ~160.
+ *
+ * @param viewport `null` before the first measurement — falls back to the WHOLE duration, which is
+ *                 the pre-windowing behaviour, for one frame.
+ */
+export function planTickRange(input: {
+  duration: number;
+  pxPerSec: number;
+  minorIntervalSec: number;
+  viewport: { scrollLeft: number; width: number } | null;
+}): TickRange {
+  const { duration, minorIntervalSec, viewport } = input;
+  const epsilon = 1e-6;
+  const pxPerSec = input.pxPerSec > 0 ? input.pxPerSec : 1;
+  const minor = minorIntervalSec > 0 ? minorIntervalSec : 1;
+
+  // Clamped to [0, duration] at BOTH ends. `toT` was already capped at duration while `fromT` was
+  // only floored at 0, so a scrollLeft past the content produced firstMinor > lastMinor — and the
+  // render loop is `for (i = firstMinor; i <= lastMinor; i++)`, which then draws NOTHING. A blank
+  // ruler, from an inverted range, with no error. Browsers clamp scrollLeft to the scrollable
+  // extent so this is not reachable today, but "not reachable today" is how the last silent no-op
+  // in this file survived review.
+  const fromT = viewport
+    ? Math.min(duration, Math.max(0, (viewport.scrollLeft - viewport.width * RULER_OVERSCAN_VIEWPORTS) / pxPerSec))
+    : 0;
+  const toT = viewport
+    ? Math.min(duration, (viewport.scrollLeft + viewport.width * (1 + RULER_OVERSCAN_VIEWPORTS)) / pxPerSec)
+    : duration;
+
+  const rawFirst = Math.max(0, Math.floor((fromT + epsilon) / minor));
+  const rawLast = Math.floor((toT + epsilon) / minor);
+  const firstMinor = Math.max(0, Math.floor(rawFirst / RANGE_BLOCK) * RANGE_BLOCK);
+  return {
+    firstMinor,
+    // Belt-and-braces, and REDUNDANT given the fromT clamp above — mutation testing showed
+    // removing this changes no result, because clamping fromT to duration already forces
+    // rawFirst <= rawLast. Kept because an inverted range renders an empty ruler SILENTLY (the
+    // draw loop is `for (i = firstMinor; i <= lastMinor; i++)`), and that is a bad thing to leave
+    // one refactor away. Do not write a test claiming to cover it; nothing can reach it.
+    lastMinor: Math.max(firstMinor, Math.ceil((rawLast + 1) / RANGE_BLOCK) * RANGE_BLOCK),
+  };
+}

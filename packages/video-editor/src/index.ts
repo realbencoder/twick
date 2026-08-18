@@ -108,13 +108,16 @@ export type { StripWindow, StripWindowInput } from "./helpers/strip-window";
 export {
   chooseTickInterval,
   planRulerTicks,
+  planTickRange,
+  RANGE_BLOCK,
+  RULER_OVERSCAN_VIEWPORTS,
   formatRulerLabel,
   NICE_TICK_INTERVALS,
   TARGET_LABEL_PX,
   MAX_MAJORS,
   MAX_MINORS,
 } from "./helpers/ruler-ticks";
-export type { TickInterval } from "./helpers/ruler-ticks";
+export type { TickInterval, TickRange } from "./helpers/ruler-ticks";
 export type {
   SeamGiveBackPlan,
   SeamElementLike,
