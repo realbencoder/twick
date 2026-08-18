@@ -106,7 +106,6 @@ function TimelineView({
   chapters?: ChapterMarker[];
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const seekContainerRef = useRef<HTMLDivElement>(null);
   const timelineContentRef = useRef<HTMLDivElement>(null);
   const [, setScrollLeft] = useState(0);
   const pointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
@@ -498,10 +497,6 @@ function TimelineView({
     newScroll = Math.max(0, newScroll);
     container.scrollLeft = newScroll;
     lastScrollLeftRef.current = container.scrollLeft; // post-assign (browser may clamp) = new truth
-    // Also sync the seek container
-    if (seekContainerRef.current) {
-      seekContainerRef.current.scrollLeft = newScroll;
-    }
     // The anchor is authoritative for this zoom frame — hold followPlayhead off until the
     // playhead pixels published by SeekTrack have caught up with the new scale (audit Z2).
     followSuppressUntilRef.current = performance.now() + 150;
@@ -514,13 +509,6 @@ function TimelineView({
     setScrollLeft(scrollPosition);
 
     // Update all containers to the same scroll position
-    if (
-      seekContainerRef.current &&
-      e.currentTarget !== seekContainerRef.current
-    ) {
-      seekContainerRef.current.scrollLeft = scrollPosition;
-    }
-
     if (containerRef.current && e.currentTarget !== containerRef.current) {
       containerRef.current.scrollLeft = scrollPosition;
     }

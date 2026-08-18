@@ -1,7 +1,8 @@
 import React, { useRef, useState, useMemo, useEffect } from "react";
 import { useDrag } from "@use-gesture/react";
 import "../../styles/timeline.css";
-import { chooseTickInterval, formatRulerLabel } from "../../helpers/ruler-ticks";
+import { planRulerTicks, formatRulerLabel } from "../../helpers/ruler-ticks";
+import { readTimelineViewport, TIMELINE_SCROLL_SELECTOR } from "../../helpers/strip-window";
 import { TimelineTickConfig } from "../video-editor";
 import { useTimeScale } from "../../helpers/time-scale";
 
@@ -80,36 +81,58 @@ export default function SeekTrack({
     });
   }, [seekPosition, isDragging, onPlayheadUpdate]);
 
-  // VISIBLE WINDOW of the ruler, in px. This container's scrollLeft is kept in sync with the
-  // timeline's by timeline-view (`seekContainerRef.current.scrollLeft = scrollPosition`), so
-  // reading it here IS the timeline viewport. Used to render only the ticks on screen — see the
-  // density cap below for why that matters.
-  const [rulerViewport, setRulerViewport] = useState({ scrollLeft: 0, width: 0 });
+  // VISIBLE WINDOW, read from the timeline's REAL horizontal scroller — NOT from this element.
+  //
+  // THIS ELEMENT IS THE WRONG ONE TO MEASURE, and measuring it is a silent no-op rather than a
+  // visible bug, which is why it shipped once already. `.twick-seek-track-container-no-scrollbar`
+  // is `width:100%` inside a `width: duration*zoom*100` parent, so its clientWidth IS the content
+  // width and it never overflows — `scrollLeft` is pinned at 0 and no scroll event ever fires.
+  // Divide that width by pxPerSec and the terms cancel: `contentWidth / (contentWidth/duration)`
+  // === `duration`, at every zoom. That is exactly the value the zoom-blind code used, so the
+  // "fix" recomputed the old answer by a longer route and the ruler stayed at 5s ticks.
+  //
+  // The scroller is the ANCESTOR `.twick-timeline-scroll-container` (`overflow-x:auto`), which
+  // seek-track is rendered inside. `readTimelineViewport` walks up to it — the same helper the
+  // per-clip strip canvases use, so both features window against one definition of "on screen".
+  const [rulerViewport, setRulerViewport] = useState<{ scrollLeft: number; width: number } | null>(null);
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    const scroller = el.closest(TIMELINE_SCROLL_SELECTOR) as HTMLElement | null;
+    if (!scroller) {
+      // Degrade to the un-windowed full-duration ruler rather than rendering nothing. Loud,
+      // because a silent degradation here is indistinguishable from working (repo rule: a quiet
+      // fallback on a quality path is how RAG stayed dead for months).
+      console.warn("[seek-track] no .twick-timeline-scroll-container ancestor — ruler ticks will not follow zoom");
+      return;
+    }
     let raf = 0;
     const read = () => {
       raf = 0;
-      // Return the PREVIOUS object when nothing moved: this state feeds the ruler memo, and a fresh
-      // object on every scroll event would rebuild every tick div at scroll rate.
+      const v = readTimelineViewport(el);
+      if (!v) return;
+      // Keep the PREVIOUS object when nothing moved. This feeds a memo; a fresh object per scroll
+      // event would rebuild the ruler at scroll rate.
       setRulerViewport((prev) =>
-        prev.scrollLeft === el.scrollLeft && prev.width === el.clientWidth
+        prev && prev.scrollLeft === v.scrollLeft && prev.width === v.viewportWidth
           ? prev
-          : { scrollLeft: el.scrollLeft, width: el.clientWidth }
+          : { scrollLeft: v.scrollLeft, width: v.viewportWidth }
       );
     };
     const schedule = () => { if (!raf) raf = requestAnimationFrame(read); };
     read();
-    el.addEventListener("scroll", schedule, { passive: true });
+    scroller.addEventListener("scroll", schedule, { passive: true });
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
-    ro?.observe(el);
+    ro?.observe(scroller);
     return () => {
       if (raf) cancelAnimationFrame(raf);
-      el.removeEventListener("scroll", schedule);
+      scroller.removeEventListener("scroll", schedule);
       ro?.disconnect();
     };
-  }, []);
+    // Re-read on any time-scale change: a zoom step rewrites both the content width and
+    // scrollLeft, and `ts` is memoized on [zoom, duration, labelWidth] so this does not re-run
+    // during scrolling.
+  }, [ts]);
 
   // Tick config (major/minor) based on duration tiers with more density for longer videos
   const { majorIntervalSec, minorIntervalSec } = useMemo(() => {
@@ -140,11 +163,13 @@ export default function SeekTrack({
     // zoom. The density cap inside chooseTickInterval is measured against the VISIBLE span, not the
     // duration — see helpers/ruler-ticks.ts for why that distinction is the whole bug.
     const pxPerSec = (ts as unknown as { pxPerSec?: number }).pxPerSec || 1;
-    // Before first measure (width 0) fall back to the whole duration — today's behaviour, for
-    // exactly one frame, rather than guessing a viewport we do not have yet.
-    const spanSec = rulerViewport.width > 0 ? rulerViewport.width / pxPerSec : duration;
-    return chooseTickInterval(pxPerSec, spanSec);
-  }, [duration, timelineTickConfigs, ts, rulerViewport.width]);
+    // Before the first measure, fall back to the whole duration — today's behaviour for exactly
+    // one frame, rather than guessing a viewport we do not have yet.
+    // planRulerTicks (not chooseTickInterval) so the WIDTH is what crosses the boundary — see
+    // its docblock: handing a span across meant no test could express passing the wrong width,
+    // which is precisely how the zoom-blind version shipped green.
+    return planRulerTicks({ duration, pxPerSec, viewportWidth: rulerViewport?.width ?? null });
+  }, [duration, timelineTickConfigs, ts, rulerViewport]);
 
 
   // Container width not needed; tick rendering uses CSS backgrounds sized by totalWidth
@@ -255,6 +280,35 @@ export default function SeekTrack({
   // on the playhead. Building the ~110 tick <div>s used to run on every SeekTrack render (~20×/sec
   // during playback, since seekPosition recomputes each tick). Now the node is reused by reference
   // between playhead ticks; it rebuilds only when duration/zoom/intervals change.
+  // TICK INDEX RANGE — hoisted out of the ruler memo deliberately, and this is load-bearing.
+  //
+  // The ruler memo used to depend on the `rulerViewport` OBJECT. That was harmless only while the
+  // viewport was measured from the wrong element and scrollLeft was frozen at 0; the moment the
+  // measurement is correct, a new object per scroll frame rebuilds every tick div at scroll rate
+  // (measured on a harness of the shipped shapes: 120 rebuilds per 120 frames vs 8 with these
+  // scalars, identical output). Fixing the measurement without this trades a tick bug for a
+  // scroll-jank bug. The strip windowing next door states the same rule — see the comment in
+  // track-element.tsx about a scroll prop defeating the memo.
+  //
+  // Scalars, not an object: the range only changes when the window crosses a whole tick, which is
+  // what makes the rebuild rate a function of tick spacing rather than of pixels moved.
+  const { firstMinor, lastMinor } = useMemo(() => {
+    const epsilon = 1e-6;
+    const pxPerSecNow = (ts as unknown as { pxPerSec?: number }).pxPerSec || 1;
+    // Overscan one viewport each side so a small scroll never exposes a bare stretch before the
+    // next rebuild lands. Matches STRIP_OVERSCAN_FACTOR next door.
+    const fromT = rulerViewport
+      ? Math.max(0, (rulerViewport.scrollLeft - rulerViewport.width) / pxPerSecNow)
+      : 0;
+    const toT = rulerViewport
+      ? Math.min(duration, (rulerViewport.scrollLeft + rulerViewport.width * 2) / pxPerSecNow)
+      : duration;
+    return {
+      firstMinor: Math.max(0, Math.floor((fromT + epsilon) / minorIntervalSec)),
+      lastMinor: Math.floor((toT + epsilon) / minorIntervalSec),
+    };
+  }, [rulerViewport, ts, duration, minorIntervalSec]);
+
   const ruler = useMemo(() => {
     const ticks: React.ReactElement[] = [];
     const labels: React.ReactElement[] = [];
@@ -274,16 +328,6 @@ export default function SeekTrack({
     // This is what lets the density cap above stop binding: at any zoom the loop emits roughly
     // (3 viewports / minor spacing) nodes — a couple of hundred — instead of one per minor tick
     // across the entire video.
-    const pxPerSecNow = (ts as unknown as { pxPerSec?: number }).pxPerSec || 1;
-    const windowed = rulerViewport.width > 0;
-    const fromT = windowed
-      ? Math.max(0, (rulerViewport.scrollLeft - rulerViewport.width) / pxPerSecNow)
-      : 0;
-    const toT = windowed
-      ? Math.min(duration, (rulerViewport.scrollLeft + rulerViewport.width * 2) / pxPerSecNow)
-      : duration;
-    const firstMinor = Math.max(0, Math.floor((fromT + epsilon) / minorIntervalSec));
-    const lastMinor = Math.floor((toT + epsilon) / minorIntervalSec);
     for (let i = firstMinor; i <= lastMinor; i++) {
       const t = i * minorIntervalSec;
       const left = ts.timeToPx(t);
@@ -347,31 +391,19 @@ export default function SeekTrack({
         {labels}
       </div>
     );
-  }, [duration, minorIntervalSec, majorIntervalSec, ts, totalWidth, rulerViewport]);
+    // NOTE the deps: firstMinor/lastMinor, NEVER rulerViewport. See the hoist comment above.
+  }, [duration, minorIntervalSec, majorIntervalSec, ts, totalWidth, firstMinor, lastMinor]);
 
   return (
     <div className="twick-seek-track">
       <div
         ref={containerRef}
         className="twick-seek-track-container-no-scrollbar"
-        // DRAG ANYWHERE ON THE RULER. The binding used to sit on the playhead div, so live
-        // drag-scrub — which is built, shipped and ON by default for every creator — was reachable
-        // only by grabbing a ~12px handle. Everywhere else in this editor is a drag surface; the
-        // ruler was a click surface. The handler already derives its position from this container's
-        // rect + scrollLeft, so it works unchanged from any x.
-        //
-        // onClick stays for tap-to-seek. A tap also runs the drag handler (down then up at the same
-        // x), so it seeks twice to the SAME time — idempotent, and cheaper than a movement-threshold
-        // guard that would have to duplicate @use-gesture's tap filtering.
-        {...bind()}
         onClick={(e) => seekFromClientX(e.clientX)}
         style={{
           overflowX: "auto",
           overflowY: "hidden",
           position: "relative",
-          // Required for the drag: without it the browser claims the pointer for panning and the
-          // gesture never reaches us. Desktop-only editor (1024px+ gate), so no touch-scroll loss.
-          touchAction: "none",
           scrollbarWidth: "none", // Firefox
           msOverflowStyle: "none", // IE/Edge
         }}
@@ -381,6 +413,7 @@ export default function SeekTrack({
         
         {/* Seek tip (playhead) */}
         <div
+          {...bind()}
           className="twick-seek-track-playhead"
           style={{ 
             position: "absolute",

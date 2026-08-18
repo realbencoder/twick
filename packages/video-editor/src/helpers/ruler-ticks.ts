@@ -89,3 +89,35 @@ export function formatRulerLabel(t: number, majorIntervalSec: number, duration: 
   }
   return subSecond ? `${t.toFixed(1)}s` : `${Math.round(t)}s`;
 }
+
+/**
+ * Choose the tick interval from GEOMETRY, deriving the visible span itself.
+ *
+ * THIS EXISTS BECAUSE OF THE BUG IT MAKES TESTABLE. `chooseTickInterval` takes a span, so a test
+ * that hands it `viewportWidth / pxPerSec` proves the arithmetic and proves NOTHING about where
+ * that width came from. The first attempt at this feature measured the ruler's OWN element —
+ * which is laid out at content width and never overflows — so the terms cancelled
+ * (`contentWidth / (contentWidth / duration)` === `duration`) and the ruler stayed zoom-blind at
+ * every zoom level. Twelve executed tests passed against it, and the suite's own must-fail
+ * control used the duration as its span, i.e. it encoded the live bug as the expected failure.
+ *
+ * Taking the WIDTH moves that mistake inside the function, where a test can express it: pass the
+ * content width and you get the coarse (wrong) answer, pass the real viewport width and you get
+ * the fine one. A revert to measuring the wrong element collapses the two into the same number
+ * and the comparison fails.
+ *
+ * @param viewportWidth  px of ruler ACTUALLY ON SCREEN — the horizontal scroller's clientWidth,
+ *                       NOT the content width. `null` before the first measurement, which falls
+ *                       back to the whole duration (today's behaviour, for one frame).
+ */
+export function planRulerTicks(input: {
+  duration: number;
+  pxPerSec: number;
+  viewportWidth: number | null;
+}): TickInterval {
+  const { duration, pxPerSec, viewportWidth } = input;
+  const safePxPerSec = pxPerSec > 0 ? pxPerSec : 1;
+  const spanSec =
+    viewportWidth != null && viewportWidth > 0 ? viewportWidth / safePxPerSec : duration;
+  return chooseTickInterval(safePxPerSec, spanSec);
+}

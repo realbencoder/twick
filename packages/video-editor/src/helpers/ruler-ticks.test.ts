@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { chooseTickInterval, formatRulerLabel, MAX_MAJORS } from "./ruler-ticks";
+import { chooseTickInterval, formatRulerLabel, MAX_MAJORS, planRulerTicks } from "./ruler-ticks";
 
 /** A 24-minute video — the case the founder reported. pxPerSec = 100 * zoom. */
 const LONG = 1454;
@@ -100,3 +100,75 @@ describe("formatRulerLabel — precision follows the INTERVAL, not the duration"
     expect(new Set(labels).size).toBeLessThan(labels.length); // proves the bug was real
   });
 });
+
+/**
+ * THE REGRESSION THAT SHIPPED. Every one of these fails against the first attempt at this feature,
+ * and none of the twelve tests that shipped WITH it could express any of them — they all handed
+ * the function a span, so the only untested step was the one that was wrong.
+ */
+describe('planRulerTicks — the width is the thing that was wrong', () => {
+  // The founder's video, and the zoom he tried.
+  const DURATION = 1454;          // 24:14
+  const ZOOM = 3;                 // 300%
+  const PX_PER_SEC = ZOOM * 100;  // time-scale.ts: contentWidth = duration * zoom * 100
+  const CONTENT_WIDTH = DURATION * PX_PER_SEC; // 436,200px — what the WRONG element measures
+  const REAL_VIEWPORT = 1064;     // measured clientWidth of .twick-timeline-scroll-container
+
+  it('gives sub-second ticks on a 24-minute video at 300% zoom', () => {
+    const { majorIntervalSec } = planRulerTicks({
+      duration: DURATION, pxPerSec: PX_PER_SEC, viewportWidth: REAL_VIEWPORT,
+    });
+    expect(majorIntervalSec).toBeLessThan(1);
+  });
+
+  it('MUST-FAIL CONTROL: the content width reproduces the shipped bug', () => {
+    // contentWidth / pxPerSec === duration, so this is the zoom-blind path exactly.
+    const bug = planRulerTicks({
+      duration: DURATION, pxPerSec: PX_PER_SEC, viewportWidth: CONTENT_WIDTH,
+    });
+    expect(bug.majorIntervalSec).toBeGreaterThanOrEqual(5);
+  });
+
+  it('the two disagree — measuring the wrong element is DETECTABLE here', () => {
+    // This is the assertion the old suite structurally could not make. If someone reverts to
+    // measuring the ruler's own element, both calls receive the same width and this collapses.
+    const right = planRulerTicks({ duration: DURATION, pxPerSec: PX_PER_SEC, viewportWidth: REAL_VIEWPORT });
+    const wrong = planRulerTicks({ duration: DURATION, pxPerSec: PX_PER_SEC, viewportWidth: CONTENT_WIDTH });
+    expect(right.majorIntervalSec).not.toEqual(wrong.majorIntervalSec);
+    expect(right.majorIntervalSec).toBeLessThan(wrong.majorIntervalSec);
+  });
+
+  it('zoom actually changes the answer at a fixed duration', () => {
+    // The whole complaint: "on the long one, when I zoom in, it still just has 5-10s intervals."
+    const at = (z: number) =>
+      planRulerTicks({ duration: DURATION, pxPerSec: z * 100, viewportWidth: REAL_VIEWPORT }).majorIntervalSec;
+    const steps = [0.25, 0.5, 1, 2, 3].map(at);
+    // NON-increasing, not strictly decreasing: the interval ladder is discrete
+    // (NICE_TICK_INTERVALS), so two adjacent zoom rungs can legitimately share one interval —
+    // 2x and 3x both land on 0.5s. Asserting strict monotonicity encodes an assumption about the
+    // ladder that is simply false.
+    for (let i = 1; i < steps.length; i++) expect(steps[i]).toBeLessThanOrEqual(steps[i - 1]);
+    // But zooming across the whole range MUST buy detail. Under the shipped bug every entry here
+    // is the same 5s, so this is the assertion that fails on a revert.
+    expect(steps[steps.length - 1]).toBeLessThan(steps[0]);
+  });
+
+  it('long and short videos agree at the same zoom — duration must not leak in', () => {
+    const long = planRulerTicks({ duration: 1454, pxPerSec: 300, viewportWidth: REAL_VIEWPORT });
+    const short = planRulerTicks({ duration: 142, pxPerSec: 300, viewportWidth: REAL_VIEWPORT });
+    // A 24-min and a 2-min video, both at 300%, show the same visible span — so the same ticks.
+    // The shipped bug is exactly this failing: 5s vs 0.5s.
+    expect(long).toEqual(short);
+  });
+
+  it('falls back to the whole duration before the first measurement', () => {
+    const unmeasured = planRulerTicks({ duration: DURATION, pxPerSec: PX_PER_SEC, viewportWidth: null });
+    const asDuration = chooseTickInterval(PX_PER_SEC, DURATION);
+    expect(unmeasured).toEqual(asDuration);
+  });
+
+  it('treats a zero/absent width as unmeasured rather than dividing by it', () => {
+    expect(planRulerTicks({ duration: 100, pxPerSec: 100, viewportWidth: 0 }))
+      .toEqual(planRulerTicks({ duration: 100, pxPerSec: 100, viewportWidth: null }));
+  });
+})

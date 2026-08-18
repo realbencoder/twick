@@ -107,6 +107,7 @@ export type { StripWindow, StripWindowInput } from "./helpers/strip-window";
 // on an earlier change in this package.
 export {
   chooseTickInterval,
+  planRulerTicks,
   formatRulerLabel,
   NICE_TICK_INTERVALS,
   TARGET_LABEL_PX,
