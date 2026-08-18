@@ -380,7 +380,12 @@ export const TrackElementView = memo(({
       rafId = requestAnimationFrame(() => { rafId = 0; draw(); });
     };
     draw();
-    const onReady = () => { draw(); };
+    // NEW DATA INVALIDATES THE MEMO. The app registers the waveform in TIERS — the 50/sec base
+    // synchronously, then the 200/sec HD artifact from S3 — and re-dispatches this event on each
+    // swap so mounted clips repaint. That draw SUCCEEDED with the base tier, so the memo would
+    // happily suppress the HD repaint and the deep-zoom tier (#328) would never land. The memo is
+    // for SCROLL and RESIZE only; anything that changes the underlying data must clear it first.
+    const onReady = () => { drawnWin = null; draw(); };
     window.addEventListener("twick-waveform-ready", onReady);
     // Scroll does not bubble, so subscribe on the scroller itself. Deliberately NOT a prop and
     // NOT a dep: TrackBase and TrackElementView are both memo'd and every prop is referentially
@@ -529,17 +534,24 @@ export const TrackElementView = memo(({
       const heightPx = canvas!.clientHeight;
       if (widthPx <= 0 || heightPx <= 0) return false;
       const dpr = Math.min(2, (typeof window !== "undefined" && window.devicePixelRatio) || 1);
-      drawClipFilmstrip(
+      const complete = drawClipFilmstrip(
         canvas!,
         meta,
         { sourceStart, span, playbackRate: wfRate, widthPx, heightPx, dpr },
         scheduleRedraw // STABLE ref → deduped by ensureSheet; rAF coalesces bursts. NEVER a fresh closure.
       );
-      drawnWin = win;
+      // ONLY memoize a COMPLETE draw. On a cold sheet cache this paints nothing (sheets load
+      // async), and recording that as "drawn" made the memo suppress the very redraw `onSheetLoad`
+      // fires when they arrive — the filmstrip stayed BLANK for the session, on the first open of
+      // every video. The waveform has always had this guard (`if (ok)`); the filmstrip did not,
+      // because its draw returned void. Two independent reviewers reproduced it.
+      if (complete) drawnWin = win;
       return true;
     }
     const drewNow = draw();
-    const onReady = () => { draw(); };
+    // New data invalidates the memo — see the waveform effect above. Same reason: the memo is for
+    // SCROLL and RESIZE only, and a late filmstrip registration changes what should be on screen.
+    const onReady = () => { drawnWin = null; draw(); };
     // Only listen for late registration if the first paint couldn't draw yet (filmstrip not registered).
     if (!drewNow) window.addEventListener("twick-filmstrip-ready", onReady);
     const scroller = canvas.closest(TIMELINE_SCROLL_SELECTOR) as HTMLElement | null;

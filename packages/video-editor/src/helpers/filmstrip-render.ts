@@ -170,16 +170,29 @@ export interface DrawFilmstripOpts {
  * transparent (the single-frame background thumbnail shows through until the sheet decodes, then
  * `onSheetLoad` triggers a redraw) — a graceful progressive load, never a black gap.
  */
+/**
+ * Returns TRUE only when the draw was COMPLETE — every tile it wanted was available.
+ *
+ * The caller memoizes the drawn window to avoid re-rastering on every scroll frame, and that memo
+ * MUST NOT record an incomplete draw. On a cold sheet cache this function paints nothing (sheets
+ * are fetched async), and if the caller recorded that as "drawn", the redraw fired by `onSheetLoad`
+ * 100-300ms later would be suppressed and the filmstrip would stay BLANK for the whole session —
+ * on the first open of every video. Found by two independent reviewers running it, after being
+ * noticed and shipped anyway.
+ *
+ * A sheet that has permanently FAILED does not count as incomplete: it will never improve, and
+ * treating it as pending would defeat the memo forever on that video.
+ */
 export function drawClipFilmstrip(
   canvas: HTMLCanvasElement,
   meta: FilmstripMeta,
   opts: DrawFilmstripOpts,
   onSheetLoad: () => void
-): void {
+): boolean {
   const { sourceStart, span, playbackRate, widthPx, heightPx, dpr } = opts;
-  if (widthPx <= 0 || heightPx <= 0) return;
+  if (widthPx <= 0 || heightPx <= 0) return false;
   const ctx = canvas.getContext("2d");
-  if (!ctx) return;
+  if (!ctx) return false;
 
   // BUG-1 FIX: set ONLY the backing store from the measured CSS size — never `canvas.style.width/
   // height`. The JSX gives the canvas `position:absolute; inset:0` (fills the clip); pinning an
@@ -211,6 +224,11 @@ export function drawClipFilmstrip(
   // on-screen frame height — the cache stores at this scale and the sub-rects index at this scale.
   const scale = scaleForTile(meta.tileH);
 
+  // Any tile skipped because its sheet is STILL LOADING makes this draw incomplete, so the
+  // caller must not memoize it. A permanently-errored sheet does not count — it will never
+  // improve, and treating it as pending would disable the memo forever on that video.
+  let pending = false;
+
   for (let i = 0; i < n; i++) {
     // Sample the CENTER of each frame slot → source time (honors cuts/reorders via sourceStart).
     const frac = (i + 0.5) / n;
@@ -219,7 +237,12 @@ export function drawClipFilmstrip(
     const url = meta.sheetUrls[loc.sheetIdx];
     if (!url) continue;
     const img = ensureSheet(url, scale, onSheetLoad);
-    if (!img) continue; // still loading — leave transparent, redraw on load
+    if (!img) {
+      // ensureSheet returns null for BOTH "still loading" and "permanently failed" — only the
+      // former should block memoization.
+      if (!SHEET_ERRORS.has(url)) pending = true;
+      continue; // leave transparent, redraw on load
+    }
     const dx = i * slotW;
     // Last slot reaches widthPx exactly; the min is float-safety.
     const drawW = Math.min(slotW, widthPx - dx);
@@ -230,4 +253,5 @@ export function drawClipFilmstrip(
       // drawImage can throw only on a broken img; treat as blank for this frame.
     }
   }
+  return !pending;
 }
