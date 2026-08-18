@@ -1,6 +1,7 @@
 import React, { useRef, useState, useMemo, useEffect } from "react";
 import { useDrag } from "@use-gesture/react";
 import "../../styles/timeline.css";
+import { chooseTickInterval, formatRulerLabel } from "../../helpers/ruler-ticks";
 import { TimelineTickConfig } from "../video-editor";
 import { useTimeScale } from "../../helpers/time-scale";
 
@@ -135,48 +136,14 @@ export default function SeekTrack({
       };
     }
 
-    // ZOOM-AWARE default: choose the major interval from actual pixels-per-second so labels sit a
-    // comfortable ~96px apart at ANY zoom — instead of coarse duration buckets that left a 10.0s
-    // clip showing only "5s"/"10s" (the old `duration < 10` bucket was exclusive, so an exactly-10s
-    // video fell through to the 5s-major tier). Each nice interval carries a sensible minor count.
+    // ZOOM-AWARE: the interval comes from actual pixels-per-second so labels sit ~96px apart at ANY
+    // zoom. The density cap inside chooseTickInterval is measured against the VISIBLE span, not the
+    // duration — see helpers/ruler-ticks.ts for why that distinction is the whole bug.
     const pxPerSec = (ts as unknown as { pxPerSec?: number }).pxPerSec || 1;
-    const TARGET_LABEL_PX = 96;
-    const idealSec = TARGET_LABEL_PX / pxPerSec;
-    // [majorSeconds, minorSubdivisions] — minors chosen so a minor tick never falls below ~10px.
-    const NICE: Array<[number, number]> = [
-      [0.1, 2], [0.25, 5], [0.5, 5], [1, 4], [2, 4], [5, 5], [10, 5],
-      [15, 3], [30, 6], [60, 4], [120, 4], [300, 5], [600, 5], [900, 3], [1800, 6], [3600, 6],
-    ];
-    let idx = NICE.length - 1;
-    for (let k = 0; k < NICE.length; k++) {
-      if (NICE[k][0] >= idealSec) { idx = k; break; }
-    }
-    // DENSITY CAP, measured against the VISIBLE SPAN — not the whole duration.
-    //
-    // This cap used to read `duration / NICE[idx][0] > MAX_MAJORS`, with zoom absent from the
-    // expression entirely. Since it ran AFTER the zoom-aware choice above, it simply overrode it:
-    // a 1454s video needs a step of at least 1454/300 = 4.85s to stay under 300 majors, so it was
-    // pinned to 5s or 10s ticks at EVERY zoom level, forever. Zooming to 300% changed nothing.
-    // A 142s video (142/300 = 0.47) got second-by-second. The founder noticed unprompted.
-    //
-    // The ruler now renders only the visible window (see the tick loop), so the count that matters
-    // is ~viewportWidth/TARGET_LABEL_PX majors — about 11 on a 1064px viewport. The cap stays as a
-    // safety net for degenerate geometry but no longer binds in normal use, which lets the
-    // zoom-aware choice above finally survive.
-    const MAX_MAJORS = 300;
-    const MAX_MINORS = 700;
-    // Before first measure (width 0) fall back to the whole duration — that is today's behaviour,
-    // for exactly one frame, rather than guessing a viewport we do not have yet.
+    // Before first measure (width 0) fall back to the whole duration — today's behaviour, for
+    // exactly one frame, rather than guessing a viewport we do not have yet.
     const spanSec = rulerViewport.width > 0 ? rulerViewport.width / pxPerSec : duration;
-    while (idx < NICE.length - 1 && spanSec / NICE[idx][0] > MAX_MAJORS) idx++;
-    let [major, minorSub] = NICE[idx];
-    while (minorSub > 1 && spanSec / (major / minorSub) > MAX_MINORS) {
-      minorSub = Math.max(1, Math.floor(minorSub / 2));
-    }
-    return {
-      majorIntervalSec: major,
-      minorIntervalSec: minorSub > 0 ? major / minorSub : major,
-    };
+    return chooseTickInterval(pxPerSec, spanSec);
   }, [duration, timelineTickConfigs, ts, rulerViewport.width]);
 
 
@@ -293,34 +260,7 @@ export default function SeekTrack({
     const labels: React.ReactElement[] = [];
     const epsilon = 1e-6;
 
-    // Clock format (m:ss) once the scale is a minute or coarser, or the video itself is >= 1 min —
-    // "0:05" reads better than "5s" on a long timeline. Short videos keep the terser "5s".
-    //
-    // PRECISION FOLLOWS THE TICK INTERVAL, NEVER THE DURATION. The old code took the clock branch on
-    // `duration >= 60` and then always printed WHOLE seconds, which made the sub-second branch below
-    // unreachable for any video over a minute: at a 0.5s tick interval the ruler printed
-    // "0:01, 0:01, 0:02, 0:02" — adjacent labels identical, so you could not tell which tick was
-    // which while trimming. That fired on any video >= 60s zoomed past ~1.9x, i.e. the 83-second
-    // average recording. Windowing the ruler makes sub-second intervals reachable on LONG videos
-    // too, so this had to be fixed in the same change or the defect would have gone universal.
-    const fmtLabel = (t: number): string => {
-      const subSecond = majorIntervalSec < 1;
-      const clock = majorIntervalSec >= 60 || duration >= 60;
-      if (clock) {
-        // Round the TOTAL before splitting. Rounding the seconds part alone yields "1:60" at 59.6s.
-        if (subSecond) {
-          const total = Math.round(t * 10) / 10;
-          const m = Math.floor(total / 60);
-          const s = total - m * 60;
-          return `${m}:${s.toFixed(1).padStart(4, "0")}`;
-        }
-        const total = Math.round(t);
-        const m = Math.floor(total / 60);
-        const s = total % 60;
-        return `${m}:${s.toString().padStart(2, "0")}`;
-      }
-      return subSecond ? `${t.toFixed(1)}s` : `${Math.round(t)}s`;
-    };
+    const fmtLabel = (t: number): string => formatRulerLabel(t, majorIntervalSec, duration);
 
     // Number of minor ticks per major (integer, guards float drift in the isMajor test below).
     const minorsPerMajor = Math.max(1, Math.round(majorIntervalSec / minorIntervalSec));

@@ -102,6 +102,18 @@ export {
   TIMELINE_SCROLL_SELECTOR,
 } from "./helpers/strip-window";
 export type { StripWindow, StripWindowInput } from "./helpers/strip-window";
+// Ruler tick decisions. Exported for the same reason as the strip-window helpers above: so the app
+// suite can EXECUTE the shipped arithmetic. Grep-only marker tests let nine silent reverts through
+// on an earlier change in this package.
+export {
+  chooseTickInterval,
+  formatRulerLabel,
+  NICE_TICK_INTERVALS,
+  TARGET_LABEL_PX,
+  MAX_MAJORS,
+  MAX_MINORS,
+} from "./helpers/ruler-ticks";
+export type { TickInterval } from "./helpers/ruler-ticks";
 export type {
   SeamGiveBackPlan,
   SeamElementLike,
