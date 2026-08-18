@@ -115,7 +115,8 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
 
   const MAX_ZOOM = zoomConfig.max;
   const MIN_ZOOM = zoomConfig.min;
-  const ZOOM_STEP = zoomConfig.step;
+  // Per-click zoom ratio (see handleZoomIn) — kept near the old 0.1 step's feel at mid zoom.
+  const ZOOM_RATIO = 1.25;
 
   const formatTime = useCallback(
     (time: number) => formatTimeWithFrames(time, fps),
@@ -163,22 +164,22 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
     }
   }, [canSplit, selectedItem, onSplit, currentTime]);
 
+  // MULTIPLICATIVE zoom. The step used to be ADDITIVE (0.1, with a 0.02 special case below 0.2),
+  // which makes the control uneven at both ends of a 0.01-3.0 range: 0.5 -> 0.01 took thirteen
+  // clicks and 0.5 -> 3.0 took twenty-five, while one click near the floor changed the scale by 3x
+  // and near the ceiling by 3%. A constant RATIO gives the same perceptual change per click
+  // everywhere, and removes the need for the low-zoom special case.
   const handleZoomIn = useCallback(() => {
     if (setZoomLevel && zoomLevel < MAX_ZOOM) {
-      // Adaptive step: smaller steps at low zoom levels
-      const step = zoomLevel < 0.2 ? 0.02 : ZOOM_STEP;
-      setZoomLevel(Math.min(MAX_ZOOM, zoomLevel + step));
+      setZoomLevel(Math.min(MAX_ZOOM, zoomLevel * ZOOM_RATIO));
     }
-  }, [zoomLevel, setZoomLevel]);
+  }, [zoomLevel, setZoomLevel, MAX_ZOOM]);
 
   const handleZoomOut = useCallback(() => {
     if (setZoomLevel && zoomLevel > MIN_ZOOM) {
-      // Adaptive step: smaller steps at low zoom levels
-      const step = zoomLevel <= 0.2 ? 0.02 : ZOOM_STEP;
-      const newZoom = Math.max(MIN_ZOOM, zoomLevel - step);
-      setZoomLevel(newZoom);
+      setZoomLevel(Math.max(MIN_ZOOM, zoomLevel / ZOOM_RATIO));
     }
-  }, [zoomLevel, setZoomLevel]);
+  }, [zoomLevel, setZoomLevel, MIN_ZOOM]);
 
   return (
     <div className={`player-controls ${className}`}>

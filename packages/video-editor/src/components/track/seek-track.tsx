@@ -1,4 +1,4 @@
-import React, { useRef, useState, useMemo } from "react";
+import React, { useRef, useState, useMemo, useEffect } from "react";
 import { useDrag } from "@use-gesture/react";
 import "../../styles/timeline.css";
 import { TimelineTickConfig } from "../video-editor";
@@ -79,6 +79,37 @@ export default function SeekTrack({
     });
   }, [seekPosition, isDragging, onPlayheadUpdate]);
 
+  // VISIBLE WINDOW of the ruler, in px. This container's scrollLeft is kept in sync with the
+  // timeline's by timeline-view (`seekContainerRef.current.scrollLeft = scrollPosition`), so
+  // reading it here IS the timeline viewport. Used to render only the ticks on screen — see the
+  // density cap below for why that matters.
+  const [rulerViewport, setRulerViewport] = useState({ scrollLeft: 0, width: 0 });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let raf = 0;
+    const read = () => {
+      raf = 0;
+      // Return the PREVIOUS object when nothing moved: this state feeds the ruler memo, and a fresh
+      // object on every scroll event would rebuild every tick div at scroll rate.
+      setRulerViewport((prev) =>
+        prev.scrollLeft === el.scrollLeft && prev.width === el.clientWidth
+          ? prev
+          : { scrollLeft: el.scrollLeft, width: el.clientWidth }
+      );
+    };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(read); };
+    read();
+    el.addEventListener("scroll", schedule, { passive: true });
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
+    ro?.observe(el);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      el.removeEventListener("scroll", schedule);
+      ro?.disconnect();
+    };
+  }, []);
+
   // Tick config (major/minor) based on duration tiers with more density for longer videos
   const { majorIntervalSec, minorIntervalSec } = useMemo(() => {
     // Use custom tick configs if provided
@@ -120,22 +151,34 @@ export default function SeekTrack({
     for (let k = 0; k < NICE.length; k++) {
       if (NICE[k][0] >= idealSec) { idx = k; break; }
     }
-    // DENSITY CAP: the ruler renders one <div> per minor tick across the WHOLE content width, so a
-    // long video at high zoom could otherwise emit thousands of nodes. Coarsen up the NICE table
-    // until the MAJOR-label count is bounded, then thin the minor subdivisions if minors are still
-    // too many. Keeps DOM bounded (~a few hundred ticks) at any zoom/duration.
+    // DENSITY CAP, measured against the VISIBLE SPAN — not the whole duration.
+    //
+    // This cap used to read `duration / NICE[idx][0] > MAX_MAJORS`, with zoom absent from the
+    // expression entirely. Since it ran AFTER the zoom-aware choice above, it simply overrode it:
+    // a 1454s video needs a step of at least 1454/300 = 4.85s to stay under 300 majors, so it was
+    // pinned to 5s or 10s ticks at EVERY zoom level, forever. Zooming to 300% changed nothing.
+    // A 142s video (142/300 = 0.47) got second-by-second. The founder noticed unprompted.
+    //
+    // The ruler now renders only the visible window (see the tick loop), so the count that matters
+    // is ~viewportWidth/TARGET_LABEL_PX majors — about 11 on a 1064px viewport. The cap stays as a
+    // safety net for degenerate geometry but no longer binds in normal use, which lets the
+    // zoom-aware choice above finally survive.
     const MAX_MAJORS = 300;
     const MAX_MINORS = 700;
-    while (idx < NICE.length - 1 && duration / NICE[idx][0] > MAX_MAJORS) idx++;
+    // Before first measure (width 0) fall back to the whole duration — that is today's behaviour,
+    // for exactly one frame, rather than guessing a viewport we do not have yet.
+    const spanSec = rulerViewport.width > 0 ? rulerViewport.width / pxPerSec : duration;
+    while (idx < NICE.length - 1 && spanSec / NICE[idx][0] > MAX_MAJORS) idx++;
     let [major, minorSub] = NICE[idx];
-    while (minorSub > 1 && duration / (major / minorSub) > MAX_MINORS) {
+    while (minorSub > 1 && spanSec / (major / minorSub) > MAX_MINORS) {
       minorSub = Math.max(1, Math.floor(minorSub / 2));
     }
     return {
       majorIntervalSec: major,
       minorIntervalSec: minorSub > 0 ? major / minorSub : major,
     };
-  }, [duration, timelineTickConfigs, ts]);
+  }, [duration, timelineTickConfigs, ts, rulerViewport.width]);
+
 
   // Container width not needed; tick rendering uses CSS backgrounds sized by totalWidth
 
@@ -250,17 +293,33 @@ export default function SeekTrack({
     const labels: React.ReactElement[] = [];
     const epsilon = 1e-6;
 
-    // mm:ss once the scale is a minute or coarser (or the video itself is >= 1 min); sub-second
-    // precision when the major interval is finer than 1s; whole seconds otherwise.
+    // Clock format (m:ss) once the scale is a minute or coarser, or the video itself is >= 1 min —
+    // "0:05" reads better than "5s" on a long timeline. Short videos keep the terser "5s".
+    //
+    // PRECISION FOLLOWS THE TICK INTERVAL, NEVER THE DURATION. The old code took the clock branch on
+    // `duration >= 60` and then always printed WHOLE seconds, which made the sub-second branch below
+    // unreachable for any video over a minute: at a 0.5s tick interval the ruler printed
+    // "0:01, 0:01, 0:02, 0:02" — adjacent labels identical, so you could not tell which tick was
+    // which while trimming. That fired on any video >= 60s zoomed past ~1.9x, i.e. the 83-second
+    // average recording. Windowing the ruler makes sub-second intervals reachable on LONG videos
+    // too, so this had to be fixed in the same change or the defect would have gone universal.
     const fmtLabel = (t: number): string => {
-      if (majorIntervalSec >= 60 || duration >= 60) {
+      const subSecond = majorIntervalSec < 1;
+      const clock = majorIntervalSec >= 60 || duration >= 60;
+      if (clock) {
+        // Round the TOTAL before splitting. Rounding the seconds part alone yields "1:60" at 59.6s.
+        if (subSecond) {
+          const total = Math.round(t * 10) / 10;
+          const m = Math.floor(total / 60);
+          const s = total - m * 60;
+          return `${m}:${s.toFixed(1).padStart(4, "0")}`;
+        }
         const total = Math.round(t);
         const m = Math.floor(total / 60);
         const s = total % 60;
         return `${m}:${s.toString().padStart(2, "0")}`;
       }
-      if (majorIntervalSec < 1) return `${t.toFixed(1)}s`;
-      return `${Math.round(t)}s`;
+      return subSecond ? `${t.toFixed(1)}s` : `${Math.round(t)}s`;
     };
 
     // Number of minor ticks per major (integer, guards float drift in the isMajor test below).
@@ -268,8 +327,24 @@ export default function SeekTrack({
 
     // Build minor-tick positions by INDEX (i * minor) so "is this a major tick" is an exact integer
     // test (i % minorsPerMajor === 0) — the old (t/major) rounding test drifted at fine intervals.
-    const totalMinors = Math.floor((duration + epsilon) / minorIntervalSec);
-    for (let i = 0; i <= totalMinors; i++) {
+    // WINDOWED: build only the ticks in view, plus one viewport of overscan each side so a scroll
+    // never exposes a bare stretch before the next rebuild. Keys stay index-based (`tick-${i}`),
+    // so React reconciles the overlap between two windows instead of remounting every node.
+    //
+    // This is what lets the density cap above stop binding: at any zoom the loop emits roughly
+    // (3 viewports / minor spacing) nodes — a couple of hundred — instead of one per minor tick
+    // across the entire video.
+    const pxPerSecNow = (ts as unknown as { pxPerSec?: number }).pxPerSec || 1;
+    const windowed = rulerViewport.width > 0;
+    const fromT = windowed
+      ? Math.max(0, (rulerViewport.scrollLeft - rulerViewport.width) / pxPerSecNow)
+      : 0;
+    const toT = windowed
+      ? Math.min(duration, (rulerViewport.scrollLeft + rulerViewport.width * 2) / pxPerSecNow)
+      : duration;
+    const firstMinor = Math.max(0, Math.floor((fromT + epsilon) / minorIntervalSec));
+    const lastMinor = Math.floor((toT + epsilon) / minorIntervalSec);
+    for (let i = firstMinor; i <= lastMinor; i++) {
       const t = i * minorIntervalSec;
       const left = ts.timeToPx(t);
       const isMajor = i % minorsPerMajor === 0;
@@ -332,18 +407,31 @@ export default function SeekTrack({
         {labels}
       </div>
     );
-  }, [duration, minorIntervalSec, majorIntervalSec, ts, totalWidth]);
+  }, [duration, minorIntervalSec, majorIntervalSec, ts, totalWidth, rulerViewport]);
 
   return (
     <div className="twick-seek-track">
       <div
         ref={containerRef}
         className="twick-seek-track-container-no-scrollbar"
+        // DRAG ANYWHERE ON THE RULER. The binding used to sit on the playhead div, so live
+        // drag-scrub — which is built, shipped and ON by default for every creator — was reachable
+        // only by grabbing a ~12px handle. Everywhere else in this editor is a drag surface; the
+        // ruler was a click surface. The handler already derives its position from this container's
+        // rect + scrollLeft, so it works unchanged from any x.
+        //
+        // onClick stays for tap-to-seek. A tap also runs the drag handler (down then up at the same
+        // x), so it seeks twice to the SAME time — idempotent, and cheaper than a movement-threshold
+        // guard that would have to duplicate @use-gesture's tap filtering.
+        {...bind()}
         onClick={(e) => seekFromClientX(e.clientX)}
         style={{
           overflowX: "auto",
           overflowY: "hidden",
           position: "relative",
+          // Required for the drag: without it the browser claims the pointer for panning and the
+          // gesture never reaches us. Desktop-only editor (1024px+ gate), so no touch-scroll loss.
+          touchAction: "none",
           scrollbarWidth: "none", // Firefox
           msOverflowStyle: "none", // IE/Edge
         }}
@@ -353,7 +441,6 @@ export default function SeekTrack({
         
         {/* Seek tip (playhead) */}
         <div
-          {...bind()}
           className="twick-seek-track-playhead"
           style={{ 
             position: "absolute",
