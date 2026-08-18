@@ -118,6 +118,19 @@ export {
   MAX_MINORS,
 } from "./helpers/ruler-ticks";
 export type { TickInterval, TickRange } from "./helpers/ruler-ticks";
+// SeekTrack (the ruler) is exported FOR TESTING, not for host use — mount it via VideoEditor.
+//
+// Three separate reviews of this component found the same hole: the tick DECISIONS are pure and
+// provable, but WHICH ARGUMENTS the component hands them is not, and that is where every real
+// defect lived. A version of this feature that was entirely inert shipped past twelve passing
+// tests, and after two rounds of fixes three one-token mutations (`viewportWidth: null`,
+// `viewport: null`, inverting the viewport guard) still passed a 15-test suite — the first of them
+// restoring the original reported bug exactly.
+//
+// No pure helper can close that, because the mutation IS the call site. The only thing that can is
+// rendering the component and reading what it drew. It takes seven plain props and no context, so
+// this costs nothing structurally. See tests/unit/timeline-ruler-render.test.tsx in the app.
+export { default as SeekTrack } from "./components/track/seek-track";
 export type {
   SeamGiveBackPlan,
   SeamElementLike,

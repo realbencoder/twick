@@ -1,4 +1,4 @@
-import React, { useRef, useState, useMemo, useLayoutEffect } from "react";
+import React, { useRef, useState, useMemo, useEffect, useLayoutEffect } from "react";
 import { useDrag } from "@use-gesture/react";
 import "../../styles/timeline.css";
 import { planRulerTicks, planTickRange, formatRulerLabel } from "../../helpers/ruler-ticks";
@@ -96,6 +96,24 @@ export default function SeekTrack({
   // seek-track is rendered inside. `readTimelineViewport` walks up to it — the same helper the
   // per-clip strip canvases use, so both features window against one definition of "on screen".
   const [rulerViewport, setRulerViewport] = useState<{ scrollLeft: number; width: number } | null>(null);
+  // TWO effects, and the pairing is the whole point — a single one cannot cover both cases.
+  //
+  // MOUNT needs a LAYOUT effect: `rulerViewport` starts null, so the first render falls back to
+  // the whole duration. A passive effect lets the browser paint that fallback once, and on a
+  // 1454s video that is ~582 tick divs at the wrong spacing (labels 0:05/0:10/0:15) replaced by 73
+  // a frame later, on every editor open.
+  //
+  // ZOOM needs a PASSIVE effect, and my first attempt got this exactly backwards. The anchor-zoom
+  // `scrollLeft` write lives in a layout effect in the PARENT (timeline-view.tsx), and React
+  // commits CHILD layout effects BEFORE the parent's — so a layout effect here reads the
+  // PRE-anchor scroll, the functional updater returns `prev`, React bails out, and no corrected
+  // render ever happens. Measured with real React 19 + RTL: the passive version corrected the
+  // frame, the layout version did not. Running only the layout effect makes the blank-frame claim
+  // false while looking plausible.
+  //
+  // So: layout for the first measurement, passive for every subsequent one. Both call the same
+  // `read()`, which is idempotent (it returns `prev` when nothing moved), so the overlap costs
+  // nothing.
   // useLayoutEffect, NOT useEffect — measured, and it fixes two visible defects.
   //
   // The RENDER that follows a zoom step already has the new pxPerSec but still holds the viewport
@@ -149,6 +167,22 @@ export default function SeekTrack({
     // Re-read on any time-scale change: a zoom step rewrites both the content width and
     // scrollLeft, and `ts` is memoized on [zoom, duration, labelWidth] so this does not re-run
     // during scrolling.
+  }, [ts]);
+
+  // The PASSIVE half. Runs after the parent's anchor-zoom layout effect has written scrollLeft,
+  // which is the only point at which the post-zoom viewport is actually readable. Deliberately a
+  // duplicate read rather than a moved one — see the docblock above for why neither effect alone
+  // is sufficient.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const v = readTimelineViewport(el);
+    if (!v) return;
+    setRulerViewport((prev) =>
+      prev && prev.scrollLeft === v.scrollLeft && prev.width === v.viewportWidth
+        ? prev
+        : { scrollLeft: v.scrollLeft, width: v.viewportWidth }
+    );
   }, [ts]);
 
   // Tick config (major/minor) based on duration tiers with more density for longer videos
@@ -360,7 +394,14 @@ export default function SeekTrack({
         />
       );
 
-      if (isMajor && t > epsilon) {
+      // `t <= duration` IS LOAD-BEARING, and it is new. Quantising the tick range rounds
+      // `lastMinor` OUTWARD to a block boundary, so the loop now legitimately runs past the end of
+      // the video — harmless for ticks (they land off-canvas) but NOT for labels, because the
+      // `nearEnd` clamp below deliberately pulls anything within 22px of the right edge back
+      // inside the container. Without this guard every out-of-range label is dragged to the same
+      // x and overprinted: measured 13 stacked timestamps (5:00 through 5:24) at the DEFAULT 50%
+      // zoom on a 300s video, all of them later than the video is.
+      if (isMajor && t > epsilon && t <= duration + epsilon) {
         // Anchor so the first/last labels never clip: left-align near 0, right-align near the end,
         // center in the middle. (The old center-anchored end label hung half-off into overflow:hidden.)
         const nearEnd = left >= totalWidth - 22;
