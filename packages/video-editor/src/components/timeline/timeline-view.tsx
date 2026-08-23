@@ -12,6 +12,7 @@ import { useEdgeAutoScroll } from "../../hooks/use-edge-auto-scroll";
 import { MarqueeOverlay } from "./marquee-overlay";
 import { getTrackOrSeparatorAt, type DropTarget } from "../../utils/drop-target";
 import { useTimeScale, createTimeScale, LABEL_WIDTH, SEPARATOR_HEIGHT } from "../../helpers/time-scale";
+import { EyeContactLane } from "./eye-contact-lane";
 import { getSnapTargets as computeSnapTargets } from "../../helpers/snap-targets";
 import { isMainVideoTrack } from "../../helpers/editor.utils";
 import { DRAG_TYPE } from "../../helpers/constants";
@@ -835,6 +836,12 @@ function TimelineView({
             </div>
           ))}
         </div>
+      </div>
+      {/* Eye-contact exclusion lane: its own row beneath the tracks, rendered only when the
+          app registers the bridge (i.e. an ACTIVE correction). Separate from the tracks on
+          purpose — a gesture here must never select or trim a clip. */}
+      <div style={{ width: timelineWidthPx }}>
+        <EyeContactLane duration={duration} labelWidth={LABEL_WIDTH} />
       </div>
     </div>
   );
