@@ -26,13 +26,23 @@ const DRAG_THRESHOLD_PX = 3;
 export interface EyeContactLaneProps {
   /** Total timeline duration in seconds. */
   duration: number;
-  /** Width of the label gutter, so the lane lines up with the track rows above it. */
+  /** Width of the sticky label gutter. NOT subtracted from the band area — see below. */
   labelWidth: number;
+  /**
+   * The FULL clip frame width (helpers/time-scale.ts `contentWidth`, === timelineWidth).
+   *
+   * The band area is exactly this wide and the label sits BESIDE it, because that is how
+   * every other row works: time-scale.ts maps `timeToContentX = labelWidth + t/dur*contentWidth`
+   * and its docblock names deriving the frame by subtracting labelWidth as a regression a
+   * prior version already caused. Doing it with flexGrow put this lane in a frame 40px
+   * narrower than the ruler, playhead and clips — up to 40s of drift at low zoom.
+   */
+  timelineWidth: number;
 }
 
 type LaneData = { ranges: Array<[number, number]> } | null | undefined;
 
-export function EyeContactLane({ duration, labelWidth }: EyeContactLaneProps) {
+export function EyeContactLane({ duration, labelWidth, timelineWidth }: EyeContactLaneProps) {
   const [tick, setTick] = useState(0);
   const areaRef = useRef<HTMLDivElement>(null);
   const [sweep, setSweep] = useState<{ from: number; to: number } | null>(null);
@@ -83,6 +93,15 @@ export function EyeContactLane({ duration, labelWidth }: EyeContactLaneProps) {
     (e: React.PointerEvent<HTMLDivElement>) => {
       const d = dragRef.current;
       if (!d) return;
+      // The press ended somewhere we never saw — the pointer left this 18px strip, and a
+      // mouse gets no implicit capture. Without this, a later HOVER arms the drag, captures
+      // a button-less pointer, and the next click commits and PERSISTS an exclusion nobody
+      // asked for.
+      if (e.buttons === 0) {
+        dragRef.current = null;
+        setSweep(null);
+        return;
+      }
       if (!d.armed) {
         if (Math.abs(e.clientX - d.startX) < DRAG_THRESHOLD_PX) return;
         d.armed = true;
@@ -98,6 +117,26 @@ export function EyeContactLane({ duration, labelWidth }: EyeContactLaneProps) {
     },
     [timeAt]
   );
+
+  /** The interaction was taken away — abandon it. Committing here would write a range from
+   *  wherever the pointer happened to be when the browser cancelled. */
+  const onPointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    dragRef.current = null;
+    setSweep(null);
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  /** Leaving un-armed drops the press; an ARMED drag keeps going via pointer capture. */
+  const onPointerLeave = useCallback(() => {
+    if (dragRef.current && !dragRef.current.armed) {
+      dragRef.current = null;
+      setSweep(null);
+    }
+  }, []);
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -126,14 +165,23 @@ export function EyeContactLane({ duration, labelWidth }: EyeContactLaneProps) {
 
   if (!active) return null;
 
-  const pct = (t: number) => (duration > 0 ? (t / duration) * 100 : 0);
+  // Clamped: exclusions are clamped to the MASTER duration, which can exceed the edited
+  // timeline, and an unclamped band widens the scroll container or collapses to width:auto.
+  const pct = (t: number) =>
+    duration > 0 ? Math.max(0, Math.min(100, (t / duration) * 100)) : 0;
 
   return (
     <div style={{ display: "flex", alignItems: "stretch", height: 18 }}>
       <div
         style={{
           width: labelWidth,
-          flexShrink: 0,
+          flex: "none",
+          // Sticky like .twick-track-header — otherwise the label scrolls away at any
+          // scrollLeft > 0 and the lane becomes an unlabelled grey strip.
+          position: "sticky",
+          left: 0,
+          zIndex: 2,
+          background: "#171717",
           fontSize: 9,
           color: "rgba(255,255,255,0.45)",
           display: "flex",
@@ -149,11 +197,14 @@ export function EyeContactLane({ duration, labelWidth }: EyeContactLaneProps) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        onPointerCancel={onPointerCancel}
+        onPointerLeave={onPointerLeave}
         title="Drag to use your original footage here. Drag across a marked range to correct it again."
         style={{
           position: "relative",
-          flexGrow: 1,
+          width: timelineWidth,
+          flex: "none",
+          overflow: "hidden",
           cursor: "ew-resize",
           background: "rgba(255,255,255,0.04)",
           borderRadius: 3,
