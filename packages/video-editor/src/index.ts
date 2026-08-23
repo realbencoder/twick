@@ -131,6 +131,13 @@ export type { TickInterval, TickRange } from "./helpers/ruler-ticks";
 // rendering the component and reading what it drew. It takes seven plain props and no context, so
 // this costs nothing structurally. See tests/unit/timeline-ruler-render.test.tsx in the app.
 export { default as SeekTrack } from "./components/track/seek-track";
+// Exported for the SAME reason as SeekTrack above, and after the same failure: the
+// eye-contact lane's dist test string-matched the bundle, so `if (true) return null` —
+// making the lane render NOTHING — passed it, twice, including once in the commit that
+// claimed to have closed exactly that. Deleting its mount, freezing its `active` gate and
+// emptying its ranges memo all passed too. Dead code still contains every token; only
+// rendering it can tell. Two plain props, no context.
+export { EyeContactLane } from "./components/timeline/eye-contact-lane";
 export type {
   SeamGiveBackPlan,
   SeamElementLike,

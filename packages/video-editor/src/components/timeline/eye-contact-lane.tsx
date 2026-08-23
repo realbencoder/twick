@@ -171,7 +171,18 @@ export function EyeContactLane({ duration, labelWidth, timelineWidth }: EyeConta
     duration > 0 ? Math.max(0, Math.min(100, (t / duration) * 100)) : 0;
 
   return (
-    <div style={{ display: "flex", alignItems: "stretch", height: 18 }}>
+    // WIDTH is load-bearing for the sticky label: sticky is bounded by its containing block,
+    // and without an explicit width this flex child stretches to the SCROLLPORT, so the label
+    // unpins past roughly one viewport of scroll. The track rows get theirs from an ancestor
+    // sized to the content.
+    <div
+      style={{
+        display: "flex",
+        alignItems: "stretch",
+        height: 18,
+        width: labelWidth + timelineWidth,
+      }}
+    >
       <div
         style={{
           width: labelWidth,
