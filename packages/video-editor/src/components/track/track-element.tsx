@@ -1065,7 +1065,7 @@ export const TrackElementView = memo(({
             data-testid="eye-contact-badge"
             title="Using your original footage"
             style={{
-              position: "absolute", top: 4, right: 24, zIndex: 3,
+              position: "absolute", top: 3, right: 24, zIndex: 3,
               display: "flex", alignItems: "center", justifyContent: "center",
               width: 16, height: 16, borderRadius: 4,
               background: "rgba(0,0,0,0.55)", color: "rgba(255,255,255,0.8)",
