@@ -33,7 +33,7 @@ import {
   TIMELINE_SCROLL_SELECTOR,
   type StripWindow,
 } from "../../helpers/strip-window";
-import { Volume2, VolumeX } from "lucide-react";
+import { Volume2, VolumeX, EyeOff } from "lucide-react";
 import "../../styles/timeline.css";
 
 // Thumbnail cache keyed by SOURCE (not element id) so split-clone siblings sharing a src reuse one
@@ -876,6 +876,28 @@ export const TrackElementView = memo(({
   const showAudioBadge = isVideoEl;
   const isMutedClip = badgeVolume <= 0;
 
+  // ── Per-clip eye contact badge ─────────────────────────────────────────────
+  // Shown ONLY when the clip uses the ORIGINAL footage. Unlike the volume badge, which shows
+  // both states because either is a real choice, "corrected" is the default on essentially
+  // every clip — 168 eye icons is noise. Marking only the exception is legible because the
+  // badge sits ON the clip it describes.
+  const [ecTick, setEcTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setEcTick((t) => t + 1);
+    window.addEventListener("twick-eyecontact", bump);
+    return () => window.removeEventListener("twick-eyecontact", bump);
+  }, []);
+  const showEyeOff = useMemo(() => {
+    if (!isMainVideoTrack || element.getType() !== "video") return false;
+    const bridge = (window as any).__twick_eyecontact as
+      | { ranges: Array<[number, number]>; active: boolean } | null | undefined;
+    if (!bridge?.active || !bridge.ranges?.length) return false;
+    const from = Math.max(0, wfSrcTime);
+    const to = from + Math.max(0, (position.end - position.start) * wfRate);
+    const mid = (from + to) / 2;
+    return bridge.ranges.some(([a, b]) => mid >= a && mid < b);
+  }, [ecTick, isMainVideoTrack, element, wfSrcTime, wfRate, position.start, position.end]);
+
   const hasHandles =
     selectedItem?.getId() === element.getId();
 
@@ -1036,6 +1058,21 @@ export const TrackElementView = memo(({
             }}
           >
             {isMutedClip ? <VolumeX size={11} /> : <Volume2 size={11} />}
+          </div>
+        ) : null}
+        {showEyeOff ? (
+          <div
+            data-testid="eye-contact-badge"
+            title="Using your original footage"
+            style={{
+              position: "absolute", top: 4, right: 24, zIndex: 3,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 16, height: 16, borderRadius: 4,
+              background: "rgba(0,0,0,0.55)", color: "rgba(255,255,255,0.8)",
+              pointerEvents: "none",
+            }}
+          >
+            <EyeOff size={11} />
           </div>
         ) : null}
         <div className="twick-track-element-content">
