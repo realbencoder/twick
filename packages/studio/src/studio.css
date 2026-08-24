@@ -430,6 +430,58 @@ html {
   margin-top: 0.25rem;
 }
 
+/* Explanatory line under a property row (e.g. eye-contact-props). Mirrors
+   .text-style-description — same size + colour, just scoped to the property-row family
+   with a small top margin so it sits under the row instead of against it. */
+.property-hint {
+  font-size: 0.7rem;
+  color: var(--color-gray-400);
+  margin-top: 0.375rem;
+}
+
+/* On/off pill for a property row (e.g. eye-contact-props). Same shape language and
+   transition treatment as .toolbar-btn, but sized for a text label inside a property row
+   rather than a 3rem icon square. */
+.twick-toggle {
+  padding: 0.3rem 0.75rem;
+  min-width: 3.25rem;
+  border-radius: 0.375rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--color-neutral-700);
+  color: rgba(148, 163, 184, 0.9);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) ease,
+    color var(--duration-fast) ease,
+    border-color var(--duration-fast) ease,
+    box-shadow var(--duration-fast) ease;
+}
+
+.twick-toggle:hover {
+  color: white;
+  background-color: var(--color-neutral-600);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* --color-purple-500/600 resolve to the fork's real (orange) accent — see
+   packages/video-editor/src/styles/twick-colors.css. Names are stale from the pre-reskin
+   theme; values are not. Matches .toolbar-btn.active's gradient treatment, but with the
+   glow colour corrected to the accent's actual RGB (147,51,234 in .toolbar-btn.active is a
+   leftover literal from the old purple theme that was never updated). */
+.twick-toggle.twick-toggle-on {
+  background: linear-gradient(to bottom right, var(--color-purple-500), var(--color-purple-600));
+  color: white;
+  border-color: transparent;
+  box-shadow: 0 0 8px rgba(249, 115, 22, 0.25);
+}
+
+.twick-toggle.twick-toggle-on:hover {
+  color: white;
+  background: linear-gradient(to bottom right, var(--color-purple-500), var(--color-purple-600));
+}
+
 .media-content {
   flex: 1;
   overflow-y: auto;
