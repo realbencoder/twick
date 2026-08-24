@@ -12,7 +12,6 @@ import { useEdgeAutoScroll } from "../../hooks/use-edge-auto-scroll";
 import { MarqueeOverlay } from "./marquee-overlay";
 import { getTrackOrSeparatorAt, type DropTarget } from "../../utils/drop-target";
 import { useTimeScale, createTimeScale, LABEL_WIDTH, SEPARATOR_HEIGHT } from "../../helpers/time-scale";
-import { EyeContactLane } from "./eye-contact-lane";
 import { getSnapTargets as computeSnapTargets } from "../../helpers/snap-targets";
 import { isMainVideoTrack } from "../../helpers/editor.utils";
 import { DRAG_TYPE } from "../../helpers/constants";
@@ -699,20 +698,6 @@ function TimelineView({
           </div>
         ) : null}
       </div>
-      {/* Eye-contact exclusion lane. Rendered only when the app registers the bridge (an
-          ACTIVE correction), and mounted directly under the ruler rather than beneath the
-          tracks: .twick-timeline-scroll-container is overflow-y:hidden, so a row appended
-          last is the first thing clipped once the track stack is tall — silently, which is
-          already a live bug class for the lower audio tracks.
-
-          It is a SIBLING of the track content div on purpose. That div owns
-          onMouseDown={handleMarqueeMouseDown}, so a lane gesture cannot bubble into marquee
-          selection — which is what keeps S / Cmd+B / Delete unable to reach the lane. */}
-      <EyeContactLane
-        duration={duration}
-        labelWidth={LABEL_WIDTH}
-        timelineWidth={timelineWidth}
-      />
       <div
         ref={timelineContentRef}
         style={{ width: timelineWidthPx, position: "relative" }}
