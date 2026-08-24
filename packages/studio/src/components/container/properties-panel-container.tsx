@@ -15,6 +15,7 @@ import {
 } from "@twick/timeline";
 import { CaptionPropPanel } from "../properties/caption-prop";
 import { PlaybackPropsPanel } from "../properties/playback-props";
+import { EyeContactProps } from "../properties/eye-contact-props";
 import { TextPropsPanel } from "../properties/text-props";
 import { AnnotationStylePanel } from "../properties/annotation-style-panel";
 import { HostPanelExtra } from "./host-panel-extra";
@@ -226,6 +227,17 @@ export function PropertiesPanelContainer({
                     {/* Playback + Volume – video and audio */}
                     {(isVideo || isAudio) && (
                       <PlaybackPropsPanel
+                        selectedElement={selectedElement}
+                        updateElement={updateElement}
+                      />
+                    )}
+
+                    {/* Per-clip eye contact – VIDEO ONLY, never isVideo || isAudio. Audio
+                        clips have no eye contact. The component self-gates on the app
+                        bridge's mainTrackId to also exclude B-roll (which satisfies
+                        isVideo too), so the row does not appear for a meaningless choice. */}
+                    {isVideo && (
+                      <EyeContactProps
                         selectedElement={selectedElement}
                         updateElement={updateElement}
                       />

@@ -437,6 +437,11 @@ export {
  */
 export { useTextPanel, DEFAULT_TEXT_PROPS } from "./hooks/use-text-panel";
 
+// Exported for the same reason as SeekTrack in @twick/video-editor: the previous eye-contact
+// UI was gated only by string-matching the bundle, and `if (true) return null` — the component
+// rendering NOTHING — passed that test twice. Only rendering it can tell.
+export { EyeContactProps } from "./components/properties/eye-contact-props";
+
 /**
  * Default export: TwickStudio (full editor component)
  */
