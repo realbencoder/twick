@@ -165,10 +165,23 @@ export function EyeContactLane({ duration, labelWidth, timelineWidth }: EyeConta
 
   if (!active) return null;
 
-  // Clamped: exclusions are clamped to the MASTER duration, which can exceed the edited
+  // Clamped: exclusions are clamped to the MASTER duration, which can exceed the EDITED
   // timeline, and an unclamped band widens the scroll container or collapses to width:auto.
   const pct = (t: number) =>
     duration > 0 ? Math.max(0, Math.min(100, (t / duration) * 100)) : 0;
+  /**
+   * Band geometry from the clamped ENDS, not from a clamped width.
+   *
+   * `pct(to - from)` clamps each call but not the band's end: [90,140] on a 100s timeline
+   * gave left 90% + width 50% = 140%. overflow:hidden masked it, but the arithmetic was wrong.
+   */
+  const band = (from: number, to: number) => {
+    // Rounded: differencing two percentages reintroduces float noise (55-50 => 5.000000000000007),
+    // which is invisible in CSS but makes the emitted string non-deterministic.
+    const r = (n: number) => Math.round(n * 1e6) / 1e6;
+    const l = pct(from);
+    return { left: `${r(l)}%`, width: `${r(Math.max(0, pct(to) - l))}%` };
+  };
 
   return (
     // WIDTH is load-bearing for the sticky label: sticky is bounded by its containing block,
@@ -227,8 +240,7 @@ export function EyeContactLane({ duration, labelWidth, timelineWidth }: EyeConta
             key={`${i}-${from.toFixed(3)}`}
             style={{
               position: "absolute",
-              left: `${pct(from)}%`,
-              width: `${pct(to - from)}%`,
+              ...band(from, to),
               top: 2,
               bottom: 2,
               background: "rgba(148,163,184,0.55)",
@@ -242,8 +254,7 @@ export function EyeContactLane({ duration, labelWidth, timelineWidth }: EyeConta
           <div
             style={{
               position: "absolute",
-              left: `${pct(sweep.from)}%`,
-              width: `${pct(sweep.to - sweep.from)}%`,
+              ...band(sweep.from, sweep.to),
               top: 0,
               bottom: 0,
               background: "rgba(249,115,22,0.35)",
