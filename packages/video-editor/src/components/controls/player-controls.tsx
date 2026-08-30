@@ -14,12 +14,9 @@ import {
   Crosshair,
 } from "lucide-react";
 import { UndoRedoControls } from "./undo-redo-controls";
-import { TrackElement, Track, formatTimeWithFrames, canSplitElement } from "@twick/timeline";
+import { TrackElement, Track, formatTimeTenths, canSplitElement } from "@twick/timeline";
 import { TimelineZoomConfig } from "../video-editor";
-import {
-  DEFAULT_TIMELINE_ZOOM_CONFIG,
-  DEFAULT_FPS,
-} from "../../helpers/constants";
+import { DEFAULT_TIMELINE_ZOOM_CONFIG } from "../../helpers/constants";
 
 /**
  * Props for the PlayerControls component.
@@ -79,7 +76,11 @@ export interface PlayerControlsProps {
   className?: string;
   /** Timeline zoom configuration (min, max, step, default) */
   zoomConfig?: TimelineZoomConfig;
-  /** Frames per second for time display (MM:SS.FF format) */
+  /**
+   * Frames per second. RETAINED FOR API COMPATIBILITY ONLY — the readout is now seconds
+   * (`formatTimeTenths`) and this no longer affects it. `PlayerControlsProps` is re-exported through
+   * packages/studio/src/index.ts, so removing this is a public API break for zero benefit.
+   */
   fps?: number;
   /** Callback to seek to a specific time (for jump to start/end) */
   onSeek?: (time: number) => void;
@@ -107,7 +108,6 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
   setZoomLevel,
   className = "",
   zoomConfig = DEFAULT_TIMELINE_ZOOM_CONFIG,
-  fps = DEFAULT_FPS,
   onSeek,
   followPlayheadEnabled = true,
   onFollowPlayheadToggle,
@@ -117,10 +117,7 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
   const MIN_ZOOM = zoomConfig.min;
   const ZOOM_STEP = zoomConfig.step;
 
-  const formatTime = useCallback(
-    (time: number) => formatTimeWithFrames(time, fps),
-    [fps]
-  );
+  const formatTime = useCallback((time: number) => formatTimeTenths(time), []);
 
   const handleSeekToStart = useCallback(() => {
     onSeek?.(0);
