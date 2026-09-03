@@ -66,15 +66,6 @@ const propsCategories: Map<string, ToolCategory> = new Map([
     },
   ],
   [
-    "text-effects",
-    {
-      id: "text-effects",
-      name: "Text Effects",
-      icon: "SparklesIcon",
-      description: "Text Effects",
-    },
-  ],
-  [
     "color-effects",
     {
       id: "color-effects",
@@ -151,7 +142,6 @@ export function PropsToolbar({
     if (selectedElement instanceof TextElement) {
       sections.push(propsCategories.get("element-props")!);
       sections.push(propsCategories.get("animations")!);
-      sections.push(propsCategories.get("text-effects")!);
     } else if (selectedElement instanceof ImageElement) {
       sections.push(propsCategories.get("element-props")!);
       sections.push(propsCategories.get("animations")!);

@@ -102,6 +102,11 @@ export {
   TIMELINE_SCROLL_SELECTOR,
 } from "./helpers/strip-window";
 export type { StripWindow, StripWindowInput } from "./helpers/strip-window";
+// Canvas context-menu z-order decision. Exported so the app suite can EXECUTE the shipped rule
+// (the inline copy it replaced was inverted for the product's whole life, and a marker test alone
+// cannot tell "front moves toward index 0" from "front moves toward the end").
+export { reorderTracksForZOrder } from "./helpers/z-order";
+export type { ZOrderDirection } from "./helpers/z-order";
 // Ruler tick decisions. Exported for the same reason as the strip-window helpers above: so the app
 // suite can EXECUTE the shipped arithmetic. Grep-only marker tests let nine silent reverts through
 // on an earlier change in this package.

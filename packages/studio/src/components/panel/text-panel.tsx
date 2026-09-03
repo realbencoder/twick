@@ -116,7 +116,7 @@ export function TextPanel({
           <input
             type="range"
             min="8"
-            max="120"
+            max="160"
             value={fontSize}
             onChange={(e) => setFontSize(Number(e.target.value))}
             className="slider-purple"

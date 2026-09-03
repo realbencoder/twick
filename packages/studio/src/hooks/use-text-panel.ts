@@ -144,29 +144,29 @@ export const useTextPanel = ({
 
   const fonts = Object.values(AVAILABLE_TEXT_FONTS);
 
+  /**
+   * PATCH the element with what the caller changed — never overwrite it with the whole panel.
+   *
+   * This used to write all thirteen panel fields on every control change. That was fine only while
+   * the panel's state matched the element, and it does NOT once anything else edits the same
+   * element: the host's text-style presets (applied through the element setters + editor.updateElement)
+   * and the right-hand Typography section (setProps on the same instance) both mutate the element
+   * IN PLACE, and the panel's sync effect below is keyed on the element's identity, so the panel
+   * kept its stale copy. The first slider tick then wrote "Poppins" straight over the freshly
+   * applied "Corinthia" (founder-reported 2026-09-03). Writing only the changed key makes the
+   * panel unable to clobber a value it did not set, whatever it currently believes.
+   *
+   * Shadow and background are GROUPS (colour + companions), written whole when any member changes,
+   * from the merged state — a checkbox toggle needs the panel's colour, and vice versa.
+   */
   const applyLiveChangesToExistingText = (overrides: Partial<TextPanelState> = {}) => {
     if (!(selectedElement instanceof TextElement)) {
       return;
     }
 
     const textElement = selectedElement;
-
-    const nextState: Pick<
-      TextPanelState,
-      | "textContent"
-      | "fontSize"
-      | "selectedFont"
-      | "isBold"
-      | "isItalic"
-      | "textColor"
-      | "strokeColor"
-      | "strokeWidth"
-      | "applyShadow"
-      | "shadowColor"
-      | "applyBackground"
-      | "backgroundColor"
-      | "backgroundOpacity"
-    > = {
+    const changed = new Set(Object.keys(overrides));
+    const next = {
       textContent,
       fontSize,
       selectedFont,
@@ -183,44 +183,51 @@ export const useTextPanel = ({
       ...overrides,
     };
 
-    textElement.setText(nextState.textContent);
-    textElement.setFontSize(nextState.fontSize);
-    textElement.setFontFamily(nextState.selectedFont);
-    textElement.setFontWeight(nextState.isBold ? 700 : 400);
-    textElement.setFontStyle(nextState.isItalic ? "italic" : "normal");
-    textElement.setFill(nextState.textColor);
-    textElement.setStrokeColor(nextState.strokeColor);
-    textElement.setLineWidth(nextState.strokeWidth);
-    // PRESERVE the element's current alignment: the Typography panel
-    // (text-props.tsx) is the one alignment control, and resetting to the
-    // default here silently clobbered it on every font/size/colour edit.
-    textElement.setTextAlign(
-      textElement.getProps()?.textAlign ?? DEFAULT_TEXT_PROPS.textAlign
-    );
+    if (changed.has("textContent")) textElement.setText(next.textContent);
+    if (changed.has("fontSize")) textElement.setFontSize(next.fontSize);
+    if (changed.has("selectedFont")) textElement.setFontFamily(next.selectedFont);
+    if (changed.has("isBold")) textElement.setFontWeight(next.isBold ? 700 : 400);
+    if (changed.has("isItalic")) textElement.setFontStyle(next.isItalic ? "italic" : "normal");
+    if (changed.has("textColor")) textElement.setFill(next.textColor);
+    if (changed.has("strokeColor")) textElement.setStrokeColor(next.strokeColor);
+    if (changed.has("strokeWidth")) textElement.setLineWidth(next.strokeWidth);
 
-    const nextProps = { ...textElement.getProps() };
+    const touchesShadow = changed.has("applyShadow") || changed.has("shadowColor");
+    const touchesBackground =
+      changed.has("applyBackground") ||
+      changed.has("backgroundColor") ||
+      changed.has("backgroundOpacity");
 
-    if (nextState.applyShadow) {
-      nextProps.shadowColor = nextState.shadowColor;
-      nextProps.shadowOffset = DEFAULT_TEXT_PROPS.shadowOffset;
-      nextProps.shadowBlur = DEFAULT_TEXT_PROPS.shadowBlur;
-      nextProps.shadowOpacity = DEFAULT_TEXT_PROPS.shadowOpacity;
-    } else {
-      nextProps.shadowColor = undefined;
-      nextProps.shadowOffset = undefined;
-      nextProps.shadowBlur = undefined;
-      nextProps.shadowOpacity = undefined;
+    if (touchesShadow || touchesBackground) {
+      const nextProps = { ...textElement.getProps() };
+
+      if (touchesShadow) {
+        if (next.applyShadow) {
+          nextProps.shadowColor = next.shadowColor;
+          nextProps.shadowOffset = DEFAULT_TEXT_PROPS.shadowOffset;
+          nextProps.shadowBlur = DEFAULT_TEXT_PROPS.shadowBlur;
+          nextProps.shadowOpacity = DEFAULT_TEXT_PROPS.shadowOpacity;
+        } else {
+          nextProps.shadowColor = undefined;
+          nextProps.shadowOffset = undefined;
+          nextProps.shadowBlur = undefined;
+          nextProps.shadowOpacity = undefined;
+        }
+      }
+
+      if (touchesBackground) {
+        if (next.applyBackground) {
+          nextProps.backgroundColor = next.backgroundColor;
+          nextProps.backgroundOpacity = next.backgroundOpacity;
+        } else {
+          nextProps.backgroundColor = undefined;
+          nextProps.backgroundOpacity = undefined;
+        }
+      }
+
+      textElement.setProps(nextProps);
     }
 
-    if (nextState.applyBackground) {
-      nextProps.backgroundColor = nextState.backgroundColor;
-      nextProps.backgroundOpacity = nextState.backgroundOpacity;
-    } else {
-      nextProps.backgroundColor = undefined;
-      nextProps.backgroundOpacity = undefined;
-    }
-
-    textElement.setProps(nextProps);
     updateElement(textElement);
   };
 
@@ -321,6 +328,30 @@ export const useTextPanel = ({
     await addElement(textElement);
   };
 
+  // RE-SYNC ON PROPS, NOT ONLY ON IDENTITY. The sync effect below used to run only when the
+  // selected element CHANGED, so an edit made to the same instance from elsewhere (a host preset,
+  // the right-hand Typography section, an undo that keeps the id) left the panel showing the old
+  // font/size/colours — the founder saw "Corinthia · 47px · active" in the presets list while the
+  // panel above it still read Poppins 71px. The container re-renders on every timeline change
+  // (changeLog), so a per-render fingerprint of the synced props is enough to notice. The panel's
+  // own writes go through the same path and re-read as a no-op.
+  const elementFingerprint =
+    selectedElement instanceof TextElement
+      ? JSON.stringify([
+          selectedElement.getText(),
+          selectedElement.getProps().fontFamily,
+          selectedElement.getProps().fontSize,
+          selectedElement.getProps().fontWeight,
+          selectedElement.getProps().fontStyle,
+          selectedElement.getProps().fill,
+          selectedElement.getProps().stroke,
+          selectedElement.getProps().lineWidth,
+          selectedElement.getProps().shadowColor,
+          selectedElement.getProps().backgroundColor,
+          selectedElement.getProps().backgroundOpacity,
+        ])
+      : null;
+
   useEffect(() => {
     if (selectedElement instanceof TextElement) {
       setTextContent(selectedElement.getText());
@@ -372,7 +403,7 @@ export const useTextPanel = ({
       setBackgroundColor(initialDefaults.backgroundColor);
       setBackgroundOpacity(1);
     }
-  }, [selectedElement, initialDefaults]);
+  }, [selectedElement, initialDefaults, elementFingerprint]);
 
   return {
     textContent,

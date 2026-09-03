@@ -1,3 +1,4 @@
+import { reorderTracksForZOrder } from "../helpers/z-order";
 import { CANVAS_OPERATIONS, CanvasElement, useTwickCanvas } from "@twick/canvas";
 import {
   CaptionElement,
@@ -100,21 +101,14 @@ export const usePlayerManager = ({
         t.getElements().some((el) => el.getId() === elementId)
       );
       if (trackIndex < 0) return;
-      const track = tracks[trackIndex];
-      const reordered = [...tracks];
-      if (direction === "front") {
-        reordered.splice(trackIndex, 1);
-        reordered.push(track);
-      } else if (direction === "back") {
-        reordered.splice(trackIndex, 1);
-        reordered.unshift(track);
-      } else if (direction === "forward" && trackIndex < reordered.length - 1) {
-        [reordered[trackIndex], reordered[trackIndex + 1]] = [reordered[trackIndex + 1], reordered[trackIndex]];
-      } else if (direction === "backward" && trackIndex > 0) {
-        [reordered[trackIndex - 1], reordered[trackIndex]] = [reordered[trackIndex], reordered[trackIndex - 1]];
-      } else {
-        return;
-      }
+      // Index 0 renders ON TOP. The decision lives in helpers/z-order.ts so it is executable from
+      // the app suite; the inline copy that used to sit here was inverted (front pushed to the END)
+      // and had no main-track floor, so "Bring to Front" on a text overlay hid it behind the main
+      // video in the preview while the export still drew it. The floor mirrors the properties
+      // panel: the main track is found by NAME, exactly as handleSendBackward's backFloor does.
+      const mainTrackIndex = tracks.findIndex((t) => t.getName?.() === "Video");
+      const reordered = reorderTracksForZOrder(tracks, trackIndex, direction, mainTrackIndex);
+      if (!reordered) return;
       editor.reorderTracks(reordered);
       currentChangeLog.current = currentChangeLog.current + 1;
       updateCanvasRef.current(getCurrentTime(), true);

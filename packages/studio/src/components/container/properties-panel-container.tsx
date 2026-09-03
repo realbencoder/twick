@@ -1,5 +1,4 @@
 import { ElementProps } from "../properties/element-props";
-import { TextEffects } from "../properties/text-effects";
 import {
   VideoElement,
   TextElement,
@@ -243,13 +242,12 @@ export function PropertiesPanelContainer({
                       />
                     )}
 
-                    {/* Text Effects – text only */}
-                    {isText && (
-                      <TextEffects
-                        selectedElement={selectedElement}
-                        updateElement={updateElement}
-                      />
-                    )}
+                    {/* Text Effects panel REMOVED (2026-09-03) — same reason as Animations below.
+                        It wrote `textEffect` (preset/delay/duration/buffer), and NOTHING renders
+                        that prop: neither the host's WebCodecs preview nor its render worker reads
+                        it (the only references repo-wide were the timeline serializer). A creator
+                        picked "Typewriter", set a delay, and nothing happened in preview OR output.
+                        Existing saved projects still carry the prop harmlessly; nothing reads it. */}
 
                     {/* Text presets MOVED to the left Text panel (2026-08-13). Every control that
                         produces a text style — font, size, colours, stroke, shadow, background —
