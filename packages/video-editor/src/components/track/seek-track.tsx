@@ -18,7 +18,6 @@ interface SeekTrackProps {
   duration: number; // in seconds
   zoom?: number; // e.g. 1 = 100px/sec
   onSeek: (time: number) => void;
-  timelineCount?: number; // number of timeline to calculate pin height
   timelineTickConfigs?: TimelineTickConfig[]; // custom tick configurations
   /** Called when playhead position or drag state changes (for auto-scroll) */
   onPlayheadUpdate?: (state: PlayheadState) => void;
@@ -29,7 +28,6 @@ export default function SeekTrack({
   duration,
   zoom = 1,
   onSeek,
-  timelineCount = 0,
   timelineTickConfigs,
   onPlayheadUpdate,
 }: SeekTrackProps) {
@@ -51,9 +49,6 @@ export default function SeekTrack({
   const prevZoomRef = useRef(zoom);
   const zoomJustChanged = prevZoomRef.current !== zoom;
   prevZoomRef.current = zoom;
-
-  // Calculate pin height based on number of timeline
-  const pinHeight = 2 + timelineCount * (2.75 + 0.5); // 2.75rem height + 0.5rem margin per timeline
 
   // Clear pending seek once context currentTime has caught up
   React.useEffect(() => {
@@ -452,9 +447,12 @@ export default function SeekTrack({
         ref={containerRef}
         className="twick-seek-track-container-no-scrollbar"
         onClick={(e) => seekFromClientX(e.clientX)}
+        // NO overflow rule here, on purpose. This element never scrolls (see the viewport comment
+        // above: its clientWidth IS the content width and scrollLeft is pinned at 0), so the old
+        // inline `overflowX:auto` + `overflowY:hidden` did exactly one thing — clip the playhead
+        // pin at the ruler's bottom edge. A non-visible overflow on EITHER axis forces the other
+        // to clip as well, so putting `overflowX:auto` back re-hides the line by itself.
         style={{
-          overflowX: "auto",
-          overflowY: "hidden",
           position: "relative",
           scrollbarWidth: "none", // Firefox
           msOverflowStyle: "none", // IE/Edge
@@ -478,9 +476,23 @@ export default function SeekTrack({
           }}
         >
           <div className="twick-seek-track-handle"></div>
-          <div 
+          {/* Ruler segment: draggable like the handle (the wrapper carries the gesture binding). */}
+          <div
             className="twick-seek-track-pin"
-            style={{ height: `${pinHeight}rem` }}
+            style={{ height: "2rem" }}
+          ></div>
+          {/*
+            The line through the tracks. Same wrapper as the handle, so it rides the same
+            translateX, the same 150ms glide and the same zoom-teleport suppression — one source
+            of truth for where the playhead is. It is pointer-TRANSPARENT: a 2px draggable strip
+            over every clip would steal the clip's clicks and drags (over a clip, the clip wins;
+            the handle and the ruler are the seek targets). Oversized on purpose and clipped by
+            `.twick-timeline-scroll-container` (`overflow-y:hidden`) rather than sized from a
+            per-track rem formula that drifts the day a row height changes.
+          */}
+          <div
+            className="twick-seek-track-pin twick-seek-track-pin-extension"
+            style={{ top: "2rem", height: "100vh", pointerEvents: "none" }}
           ></div>
         </div>
       </div>

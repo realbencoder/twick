@@ -155,7 +155,6 @@ const TimelineManager = ({
           duration={totalDuration}
           zoom={trackZoom}
           onSeek={onSeek}
-          timelineCount={timelineData?.tracks?.length ?? 0}
           timelineTickConfigs={timelineTickConfigs}
           onPlayheadUpdate={handlePlayheadUpdate}
         />

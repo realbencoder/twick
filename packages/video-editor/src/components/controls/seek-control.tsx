@@ -5,14 +5,12 @@ import { TimelineTickConfig } from "../video-editor";
 const SeekControl = ({
   duration,
   zoom,
-  timelineCount,
   onSeek,
   timelineTickConfigs,
   onPlayheadUpdate,
 }: {
   duration: number;
   zoom: number;
-  timelineCount: number;
   onSeek: (time: number) => void;
   timelineTickConfigs?: TimelineTickConfig[];
   onPlayheadUpdate?: (state: PlayheadState) => void;
@@ -24,7 +22,6 @@ const SeekControl = ({
       currentTime={currentTime}
       zoom={zoom}
       onSeek={onSeek}
-      timelineCount={timelineCount}
       timelineTickConfigs={timelineTickConfigs}
       onPlayheadUpdate={onPlayheadUpdate}
     />
