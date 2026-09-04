@@ -488,11 +488,14 @@ export default function SeekTrack({
             over every clip would steal the clip's clicks and drags (over a clip, the clip wins;
             the handle and the ruler are the seek targets). Oversized on purpose and clipped by
             `.twick-timeline-scroll-container` (`overflow-y:hidden`) rather than sized from a
-            per-track rem formula that drifts the day a row height changes.
+            per-track rem formula that drifts the day a row height changes. `boxShadow: none`
+            because `.twick-seek-track-pin`'s glow is still the pre-retheme purple while the pin
+            itself resolves to orange — invisible in a 32px ruler, an 8px purple bloom across
+            every clip thumbnail and waveform at full track height.
           */}
           <div
             className="twick-seek-track-pin twick-seek-track-pin-extension"
-            style={{ top: "2rem", height: "100vh", pointerEvents: "none" }}
+            style={{ top: "2rem", height: "100vh", pointerEvents: "none", boxShadow: "none" }}
           ></div>
         </div>
       </div>

@@ -777,7 +777,20 @@ function TimelineView({
             }}
           />
         )}
-        <div style={{ position: "relative", zIndex: 10 }}>
+        {/*
+          NO z-index on this wrapper. It used to carry `zIndex: 10`, which made it a stacking
+          context that TRAPPED every descendant z-index — including the sticky track-header
+          column's `z-index: 30` — so the whole subtree painted at z-10 against the outer context
+          and the playhead line (`.twick-seek-track-playhead`, z-30, outer context) drew straight
+          across the track headers and their lock buttons whenever the timeline was scrolled so
+          the playhead sat under the header column (measured in Chromium, 2026-09-04). The z-10
+          now lives on each `.twick-track` LANE (track-base.tsx), so clips, trim handles and the
+          z-50 lifted clip stay trapped exactly as before, while the header column escapes to the
+          outer context and beats the line (same z-index, later in DOM). The ghost (60) and caret
+          (55) are siblings in the outer context and still paint over the line; the marquee (25)
+          and drop preview (20) still sit between the lanes and the line.
+        */}
+        <div style={{ position: "relative" }}>
           {/* Top separator (drop zone above first track) */}
           <div
             className="twick-timeline-separator"

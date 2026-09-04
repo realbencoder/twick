@@ -72,8 +72,14 @@ const TrackBase = memo(({
     <div
       ref={trackRef}
       className={"twick-track"}
+      // `zIndex: 10` makes each LANE its own stacking context (it was on the tracks wrapper in
+      // timeline-view.tsx, which also trapped the sticky header column under the playhead line —
+      // see the comment there). Selected clips (z-10), trim handles (z-10) and the lifted clip
+      // (z-50) stay contained in their lane, below the z-30 playhead line and the z-55/60 caret
+      // and ghost, exactly as they were under the wrapper.
       style={{
         width: trackWidthStyle,
+        zIndex: 10,
       }}
     >
       {elements?.map((element, index) => (
