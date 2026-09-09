@@ -503,12 +503,25 @@ export class TimelineEditor {
   }
 
   /**
-   * Remove an element and shift later elements on the SAME TRACK to close the gap.
-   * When a VIDEO element is removed, also removes/trims/shifts caption track elements
-   * that overlap the gap. Non-video deletions (B-roll, text, images) only affect same track
-   * to prevent subtitle overlap.
+   * Remove an element and close the gap it leaves — but ONLY on the magnetic MAIN track (the track
+   * NAMED `trackName`, default "Video": the same identity closeVideoTrackGaps and
+   * reorderMainTrackElement key on). There the later clips shift left so the track stays
+   * contiguous, and the caption track is cut to match (words inside the removed span drop, later
+   * words shift). Every OTHER track — captions, text/image overlays, B-roll, music, the app's
+   * Cutaways — is time-pinned to a moment in the video: deleting one of its elements leaves a gap
+   * and moves nothing else.
+   *
+   * History, because each step believed the previous one had already done this: the ripple
+   * originally shifted ALL tracks (2ef8b98); it was narrowed to the deleted element's own track so
+   * an overlay delete stopped desyncing subtitles; captions were then pinned (58ed7aa) "exactly
+   * like other overlay tracks already do" — which they did NOT: the generic same-track shift still
+   * ran for every non-caption track. Founder-hit 2026-09-09: deleting one b-roll on the Cutaways
+   * track slid every later card on that track seconds before its words, and the app's realign
+   * read the slide as a deliberate drag and stamped it. Keying on the track's TYPE was wrong a
+   * second way: B-roll tracks are type video too, so deleting a B-roll clip ran the main-track
+   * caption cut and deleted the subtitle words under it.
    */
-  rippleRemoveElement(element: TrackElement): boolean {
+  rippleRemoveElement(element: TrackElement, trackName = "Video"): boolean {
     const gapStart = element.getStart();
     const gapEnd = gapStart + element.getDuration();
     const gapDuration = element.getDuration();
@@ -516,19 +529,16 @@ export class TimelineEditor {
     const elementTrackId = element.getTrackId();
     const elementTrack = this.getTrackById(elementTrackId);
     if (!elementTrack) return false;
-    const isVideoTrack = elementTrack.getType() === TRACK_TYPES.VIDEO;
-    // Captions are time-pinned to the audio — deleting ONE caption must NOT ripple-shift the
-    // other captions (bug: deleting a subtitle slid every later subtitle out of sync). A direct
-    // caption delete is a caption-on-caption-track removal; the video-removal caption cascade
-    // (gated on isVideoTrack below) is a different path and stays unaffected.
-    const isCaptionElementDelete = elementTrack.getType() === TRACK_TYPES.CAPTION;
+    // Only the main track is magnetic. Name, not type: B-roll tracks are type video as well, and
+    // legacy saved projects carry the main track as type "element" until the app corrects it.
+    const isMainTrack = elementTrack.getName() === trackName;
 
     // Remove WITHOUT snapshotting (friend mutation) — the single trailing setTimelineData below
     // is the SOLE undo snapshot for the whole ripple. Previously this.removeElement (here AND in
     // the per-caption loop) each snapshotted, so one delete became K+2 history entries and Cmd+Z
     // landed on an intermediate, never-seen state ("undo cuts random things").
     elementTrack.createFriend().removeElement(element);
-    if (gapDuration <= 0) {
+    if (gapDuration <= 0 || !isMainTrack) {
       const committed = this.getTimelineData();
       if (committed) this.setTimelineData({ tracks: committed.tracks, updatePlayerData: true, forceUpdate: true });
       return true;
@@ -545,8 +555,8 @@ export class TimelineEditor {
       for (const track of currentData.tracks) {
         const isSameTrack = track.getId() === elementTrackId;
         const isCaptionTrack = track.getType() === TRACK_TYPES.CAPTION;
-        // Process same track always; also process caption tracks when a video element is removed
-        if (!isSameTrack && !(isVideoTrack && isCaptionTrack)) continue;
+        // A main-track delete closes its own gap and cuts the captions to match; nothing else moves.
+        if (!isSameTrack && !isCaptionTrack) continue;
 
         const elementsToRemove: TrackElement[] = [];
         for (const el of track.getElements()) {
@@ -562,16 +572,15 @@ export class TimelineEditor {
           // straddled a cut — e.g. cutting dead-space at the start). Captions entirely BEFORE the
           // cut fall through unchanged; entirely AFTER, they shift below (the existing path) — both
           // left exactly as they were. EPS keeps a boundary-kissing caption out of the word-cut.
-          if (isCaptionTrack && isVideoTrack && elStart < gapEnd - EPS && elEnd > gapStart + EPS) {
+          if (isCaptionTrack && elStart < gapEnd - EPS && elEnd > gapStart + EPS) {
             const { survived } = this.applyCutToCaption(el, gapStart, gapEnd);
             if (!survived) elementsToRemove.push(el);
             continue;
           }
           // Element starts after the gap (within EPS) — shift left to close it. Clamp start at 0:
           // a rounding-displaced neighbor can sit EPS before gapEnd, and a full shift would push it
-          // fractionally negative. Skip for a caption-on-caption delete: captions stay pinned to
-          // the audio (leave a gap, like overlay tracks already do).
-          if (elStart >= gapEnd - EPS && !isCaptionElementDelete) {
+          // fractionally negative.
+          if (elStart >= gapEnd - EPS) {
             const prevStart = el.getStart();
             const prevEnd = el.getEnd();
             el.setStart(Math.max(0, prevStart - gapDuration));
