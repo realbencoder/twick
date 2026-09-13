@@ -22,13 +22,15 @@ export function TextPropsPanel({
   updateElement,
   videoResolution,
 }: PropertiesPanelProps) {
-  if (!(selectedElement instanceof TextElement)) return null;
-
-  const textProps = selectedElement.getProps() || {};
-
+  // Hooks BEFORE the type guard: a hook after a conditional return changes the hook count
+  // between renders if this instance is ever reused across a text -> non-text selection.
   // Open by default: the Width and Line height rows are the point of this section, and a
   // collapsed accordion hid them (founder call 2026-09-13).
   const [isTypographyOpen, setIsTypographyOpen] = useState(true);
+
+  if (!(selectedElement instanceof TextElement)) return null;
+
+  const textProps = selectedElement.getProps() || {};
 
   const currentAlign = textProps.textAlign ?? "center";
   const currentWeight = textProps.fontWeight ?? 400;
@@ -39,13 +41,13 @@ export function TextPropsPanel({
   const widthMin = Math.round(canvasWidth * WIDTH_MIN_RATIO);
   const hasWidth =
     typeof textProps.width === "number" && Number.isFinite(textProps.width) && textProps.width > 0;
-  const widthValue = Math.min(
-    canvasWidth,
-    Math.max(
-      widthMin,
-      Math.round(hasWidth ? (textProps.width as number) : canvasWidth * TEXT_DEFAULT_WIDTH_RATIO)
-    )
-  );
+  // A stored width is shown RAW, never clamped into the slider's range: clamping moved the
+  // thumb while the value label kept printing the real number, so the two disagreed for any
+  // width outside [10% canvas, canvas] (reachable by an old corner scale-down). The browser
+  // pins an out-of-range thumb on its own, and the label stays truthful.
+  const widthValue = hasWidth
+    ? Math.round(textProps.width as number)
+    : Math.round(canvasWidth * TEXT_DEFAULT_WIDTH_RATIO);
   const hasLineHeight =
     typeof textProps.lineHeight === "number" &&
     Number.isFinite(textProps.lineHeight) &&
@@ -210,7 +212,9 @@ export function TextPropsPanel({
               </button>
               <button
                 type="button"
-                className={`form-btn ${currentAlign === "right" ? "active" : ""}`}
+                className={`form-btn ${
+                  currentAlign === "right" ? "active" : ""
+                }`}
                 onClick={() => setAlign("right")}
                 title="Align right"
               >
@@ -224,3 +228,4 @@ export function TextPropsPanel({
     </div>
   );
 }
+

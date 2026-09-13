@@ -23,6 +23,7 @@ import {
   DEFAULT_TEXT_PROPS,
 } from "../helpers/constants";
 import { disabledControl, rotateControl } from "./element-controls";
+import { getObjectFitSize, getThumbnailCached } from "@twick/media-utils";
 
 /**
  * Fabric composes a line's advance as fontSize * lineHeight * _fontSizeMult, and
@@ -31,7 +32,6 @@ import { disabledControl, rotateControl } from "./element-controls";
  * so divide once here and the selection box stays the same height as the drawn block.
  */
 const FABRIC_FONT_SIZE_MULT = 1.13;
-import { getObjectFitSize, getThumbnailCached } from "@twick/media-utils";
 
 const MARGIN = 10;
 
