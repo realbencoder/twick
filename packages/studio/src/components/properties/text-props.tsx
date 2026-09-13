@@ -2,7 +2,7 @@ import { TextElement } from "@twick/timeline";
 import type { PropertiesPanelProps } from "../../types";
 import { AccordionItem } from "../shared/accordion-item";
 import { PropertyRow } from "./property-row";
-import { Type, AlignLeft, AlignCenter, AlignRight, Bold, Italic } from "lucide-react";
+import { Type, AlignLeft, AlignCenter, AlignRight, Bold, Italic, RotateCcw } from "lucide-react";
 import { useState } from "react";
 
 /**
@@ -133,22 +133,7 @@ export function TextPropsPanel({
           <div className="property-section">
             <PropertyRow
               label="Line height"
-              secondary={
-                <span>
-                  {hasLineHeight ? lineHeightValue.toFixed(2) : "Auto"}
-                  {hasLineHeight && (
-                    <button
-                      type="button"
-                      className="form-btn"
-                      onClick={() => handleUpdate({ lineHeight: undefined })}
-                      title="Reset line height"
-                      aria-label="Reset line height"
-                    >
-                      Reset
-                    </button>
-                  )}
-                </span>
-              }
+              secondary={<span>{hasLineHeight ? lineHeightValue.toFixed(2) : "Auto"}</span>}
             >
               <input
                 type="range"
@@ -162,6 +147,21 @@ export function TextPropsPanel({
                 className="slider-purple"
                 aria-label="Line height"
               />
+              {/* Reset lives in the CONTROL slot beside the slider, like the Style row's two
+                  buttons. The secondary slot is a 2.5rem right-aligned VALUE area and .form-btn
+                  is a fixed 2rem square, so a button there squeezes the slider and the word
+                  "Reset" overflows the square. Icon + aria-label, matching Bold/Italic. */}
+              {hasLineHeight && (
+                <button
+                  type="button"
+                  className="form-btn"
+                  onClick={() => handleUpdate({ lineHeight: undefined })}
+                  title="Reset line height"
+                  aria-label="Reset line height"
+                >
+                  <RotateCcw className="icon-sm" />
+                </button>
+              )}
             </PropertyRow>
           </div>
 
