@@ -77,6 +77,7 @@ import { ImagePanel } from "./components/panel/image-panel";
  * Panel for adding and editing text overlays.
  */
 import { TextPanel } from "./components/panel/text-panel";
+import { TextPropsPanel } from "./components/properties/text-props";
 
 /**
  * Panel for adding and editing circle shapes.
@@ -137,6 +138,8 @@ export {
   ImagePanel,
   /** Panel for editing/add text elements */
   TextPanel,
+  /** Right-hand Typography inspector for text elements (exported so the app can EXECUTE it in tests) */
+  TextPropsPanel,
   /** Panel for caption/caption management */
   CaptionsPanel,
   /** Panel for project templates */

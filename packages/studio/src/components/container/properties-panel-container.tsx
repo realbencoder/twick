@@ -200,6 +200,7 @@ export function PropertiesPanelContainer({
                       <TextPropsPanel
                         selectedElement={selectedElement}
                         updateElement={updateElement}
+                        videoResolution={videoResolution}
                       />
                     )}
 

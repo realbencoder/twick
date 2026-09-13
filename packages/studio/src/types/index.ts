@@ -201,6 +201,8 @@ export interface PanelProps {
 export interface PropertiesPanelProps {
   selectedElement?: TrackElement | null;
   updateElement?: (element: TrackElement) => void;
+  /** Canvas size in video px — the Typography Width slider's range. Optional so the other panels are unaffected. */
+  videoResolution?: Size;
 }
 
 export interface TextElement {
