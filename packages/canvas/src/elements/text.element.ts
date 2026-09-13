@@ -26,11 +26,16 @@ export const TextElement: CanvasElementHandler = {
     );
     const videoWidth = (object.width ?? 0) * (object.scaleX ?? 1) / context.canvasMetadata.scaleX;
     const videoFontSize = Math.round((object.fontSize ?? 36) / context.canvasMetadata.scaleX);
+    // The Fabric box IS the creator's width. maxWidth is a legacy clamp the app never
+    // writes; if it survived an explicit width write it would silently narrow the new box
+    // in the preview, the export AND the next canvas rebuild.
+    const props: typeof element.props = { ...element.props };
+    delete props.maxWidth;
     return {
       element: {
         ...element,
         props: {
-          ...element.props,
+          ...props,
           rotation: getObjectCanvasAngle(object),
           x,
           y,

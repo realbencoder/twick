@@ -24,6 +24,13 @@ import elementController from "../controllers/element.controller";
 import { disabledControl, rotateControl } from "../components/element-controls";
 
 /**
+ * Ceiling for the font size a corner drag can bake. Matches BOTH size sliders (the left
+ * Text panel and the right Typography section go to 160). The old 120 snapped a 160px
+ * text down on any corner drag — one of the "resizing is clunky" reports (2026-09-13).
+ */
+const TEXT_SCALE_FONT_SIZE_MAX = 160;
+
+/**
  * Custom hook to manage a Fabric.js canvas and associated operations.
  * Provides functionality for canvas initialization, element management,
  * and event handling for interactive canvas operations.
@@ -355,7 +362,7 @@ export const useTwickCanvas = ({
       const scaleX = target.scaleX ?? 1;
       if (scaleX !== 1) {
         const newFontSize = Math.round((target.fontSize ?? 20) * scaleX);
-        target.set("fontSize", Math.max(8, Math.min(120, newFontSize)));
+        target.set("fontSize", Math.max(8, Math.min(TEXT_SCALE_FONT_SIZE_MAX, newFontSize)));
         // Bake scale into width so the text box grows/shrinks with the resize
         const newWidth = (target.width ?? 100) * scaleX;
         target.set("width", newWidth);
@@ -568,6 +575,7 @@ export const useTwickCanvas = ({
         case "scale":
         case "scaleX":
         case "scaleY":
+        case "resizing": // Fabric Textbox edge drag (changeWidth): width-only, nothing to bake
         case "rotate": {
           const currentElement = elementMap.current[elementId];
           const handler = elementController.get(

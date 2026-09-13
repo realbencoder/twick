@@ -234,6 +234,8 @@ export type CanvasElementProps = {
   width?: number;
   /** Maximum width in pixels */
   maxWidth?: number;
+  /** Line advance as a multiple of fontSize. Absent = Fabric's default (1.16 x 1.13). */
+  lineHeight?: number;
   /** Height in pixels */
   height?: number;
   /** Whether text should wrap */

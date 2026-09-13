@@ -193,6 +193,19 @@ export interface TextProps {
   lineWidth?: number;
   rotation?: number;
   fontStyle?: string;
+  /**
+   * Wrap width in video px. Written by the canvas (left/right edge drag, or a corner
+   * scale) and by the Typography Width slider. Absent = auto: the canvas measures the
+   * text and clamps to 30–90% of the canvas; both renderers wrap at 90%.
+   */
+  width?: number;
+  /** Legacy clamp on width. Nothing in the app writes it; an explicit width write removes it. */
+  maxWidth?: number;
+  /**
+   * Line advance as a multiple of fontSize (1.0 = lines touch, 2.0 = double).
+   * Absent = 1.3108, Fabric's own advance (1.16 x its 1.13 font-size multiplier).
+   */
+  lineHeight?: number;
 }
 
 export interface RectProps {

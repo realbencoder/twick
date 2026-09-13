@@ -23,6 +23,14 @@ import {
   DEFAULT_TEXT_PROPS,
 } from "../helpers/constants";
 import { disabledControl, rotateControl } from "./element-controls";
+
+/**
+ * Fabric composes a line's advance as fontSize * lineHeight * _fontSizeMult, and
+ * _fontSizeMult is 1.13 (pinned by the app's tests/unit/fabric-line-advance.test.ts).
+ * The app stores lineHeight as the FULL advance multiple (advance = fontSize * lineHeight),
+ * so divide once here and the selection box stays the same height as the drawn block.
+ */
+const FABRIC_FONT_SIZE_MULT = 1.13;
 import { getObjectFitSize, getThumbnailCached } from "@twick/media-utils";
 
 const MARGIN = 10;
@@ -103,6 +111,12 @@ export const addTextElement = ({
       )
     : undefined;
 
+  const lineHeightProp = element.props?.lineHeight;
+  const fabricLineHeight =
+    typeof lineHeightProp === "number" && Number.isFinite(lineHeightProp) && lineHeightProp > 0
+      ? lineHeightProp / FABRIC_FONT_SIZE_MULT
+      : undefined; // absent -> leave Fabric's default (1.16) untouched: byte-identical for old saves
+
   const text = new Textbox(element.props?.text || element.t || "", {
     left: x,
     top: y,
@@ -118,6 +132,7 @@ export const addTextElement = ({
     width,
     splitByGrapheme: false,
     textAlign: element.props?.textAlign || "center",
+    ...(fabricLineHeight !== undefined && { lineHeight: fabricLineHeight }),
     stroke: element.props?.stroke || DEFAULT_TEXT_PROPS.stroke,
     strokeWidth: (element.props?.lineWidth || DEFAULT_TEXT_PROPS.lineWidth) * 0.025,
     ...(backgroundColor && { backgroundColor }),
@@ -143,11 +158,14 @@ export const addTextElement = ({
   text.set("id", element.id);
   text.set("zIndex", index);
 
-  // Enable corner resize (uniform scale) + rotation; disable edge handles
+  // Corner handles: uniform scale, baked into fontSize + width on release by
+  // useTwickCanvas.handleObjectMoved. LEFT/RIGHT edge handles are Fabric's own Textbox
+  // width resize (action "resizing"): the box gets wider or narrower, the text reflows,
+  // the font size does NOT change — the one gesture the corner-only model could not
+  // express (2026-09-13). Top/bottom stay disabled: a text box's height IS its wrap, so
+  // there is nothing for them to set. Captions keep all four edges disabled (below).
   text.controls.mt = disabledControl;
   text.controls.mb = disabledControl;
-  text.controls.ml = disabledControl;
-  text.controls.mr = disabledControl;
   text.controls.mtr = rotateControl;
   text.set("lockUniScaling", true);
 
