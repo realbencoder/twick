@@ -17,6 +17,19 @@ const LINE_HEIGHT_STEP = 0.01;
 const TEXT_DEFAULT_WIDTH_RATIO = 0.9;
 const WIDTH_MIN_RATIO = 0.1;
 
+/**
+ * A Smart Cutaway card rides the timeline as a TEXT element whose props carry a `cutaway`
+ * payload, and BOTH renderers short-circuit to the card template before the text draw
+ * (playback-controller's `isCutawayElement(el.props) && renderCutaway(...)`, canvas-renderer's
+ * `text.cutaway` branch). So NONE of this panel's controls — font size, weight, style, align,
+ * width, line height — reach a cutaway card. Showing them is a lie that also costs the creator
+ * a render: a project write nulls render_status, so nudging an inert slider marks a finished
+ * video "edits not yet in your final video" and buys an identical MP4. The card's real editor
+ * is the app's own cutaway panel on the left.
+ */
+const isCutawayShell = (props: unknown): boolean =>
+  !!props && typeof props === "object" && (props as { cutaway?: unknown }).cutaway != null;
+
 export function TextPropsPanel({
   selectedElement,
   updateElement,
@@ -31,6 +44,8 @@ export function TextPropsPanel({
   if (!(selectedElement instanceof TextElement)) return null;
 
   const textProps = selectedElement.getProps() || {};
+
+  if (isCutawayShell(textProps)) return null;
 
   const currentAlign = textProps.textAlign ?? "center";
   const currentWeight = textProps.fontWeight ?? 400;
@@ -153,17 +168,21 @@ export function TextPropsPanel({
                   buttons. The secondary slot is a 2.5rem right-aligned VALUE area and .form-btn
                   is a fixed 2rem square, so a button there squeezes the slider and the word
                   "Reset" overflows the square. Icon + aria-label, matching Bold/Italic. */}
-              {hasLineHeight && (
-                <button
-                  type="button"
-                  className="form-btn"
-                  onClick={() => handleUpdate({ lineHeight: undefined })}
-                  title="Reset line height"
-                  aria-label="Reset line height"
-                >
-                  <RotateCcw className="icon-sm" />
-                </button>
-              )}
+              {/* Always mounted, hidden until there is something to reset. Mounting it on the
+                  first slider tick would shrink the flex track by 2rem mid-gesture, jumping the
+                  thumb away from the pointer and changing the drag gain for the rest of the
+                  stroke. `visibility` keeps the slot; `disabled` keeps it out of the tab order. */}
+              <button
+                type="button"
+                className="form-btn"
+                style={hasLineHeight ? undefined : { visibility: "hidden" }}
+                disabled={!hasLineHeight}
+                onClick={() => handleUpdate({ lineHeight: undefined })}
+                title="Reset line height"
+                aria-label="Reset line height"
+              >
+                <RotateCcw className="icon-sm" />
+              </button>
             </PropertyRow>
           </div>
 

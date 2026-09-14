@@ -474,6 +474,12 @@ export type CanvasElementUpdateContext = {
   elementFrameMapRef: { current: Record<string, FrameEffect | undefined> };
   captionPropsRef: { current: CaptionProps | null };
   watermarkPropsRef: { current: any };
+  /**
+   * The Fabric transform action that produced this update ("drag" | "scale" | "scaleX" |
+   * "scaleY" | "resizing" | "rotate"). Handlers use it to avoid rewriting properties the
+   * gesture did not touch — see TextElement.updateFromFabricObject and fontSize.
+   */
+  action?: string;
 };
 
 /**

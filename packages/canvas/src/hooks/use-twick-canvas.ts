@@ -542,6 +542,10 @@ export const useTwickCanvas = ({
         elementFrameMapRef: elementFrameMap,
         captionPropsRef,
         watermarkPropsRef,
+        // Which gesture produced this update. TextElement uses it to leave fontSize alone on a
+        // move/rotate/edge-resize — recomputing it from a non-scaling gesture ratchets the
+        // stored size down through the canvas-px round trip.
+        action,
       };
 
       // Marquee selection (ActiveSelection): persist each selected element to timeline
