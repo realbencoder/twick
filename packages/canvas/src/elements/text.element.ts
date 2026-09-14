@@ -15,6 +15,20 @@ import { ELEMENT_TYPES } from "../helpers/constants";
  */
 const FONT_SIZE_CHANGING_ACTIONS = new Set(["scale", "scaleX", "scaleY"]);
 
+/**
+ * The only gestures that change a text element's WRAP WIDTH: a corner scale (baked into
+ * width by handleObjectMoved) and the left/right edge drag. Moving or rotating must leave it
+ * alone, for a sharper reason than the fontSize case above.
+ *
+ * Fabric REFUSES to render a Textbox narrower than its longest word: initDimensions does
+ * `if (this.dynamicMinWidth > this.width) this._set('width', this.dynamicMinWidth)`. So a
+ * creator who sets a narrow width via the Typography slider has a Fabric box that is WIDER
+ * than what they asked for, and reading that box back on an unrelated gesture overwrites their
+ * value with Fabric's. MEASURED: stored width 200 video px on a 100px-font line, one plain
+ * drag, persisted width 638 — a 3x silent change from a gesture that only moved the element.
+ */
+const WIDTH_CHANGING_ACTIONS = new Set(["scale", "scaleX", "scaleY", "resizing"]);
+
 export const TextElement: CanvasElementHandler = {
   name: ELEMENT_TYPES.TEXT,
 
@@ -36,7 +50,13 @@ export const TextElement: CanvasElementHandler = {
       context.canvasMetadata,
       context.videoSize
     );
-    const videoWidth = (object.width ?? 0) * (object.scaleX ?? 1) / context.canvasMetadata.scaleX;
+    const prevWidth = element.props?.width;
+    const gestureResized =
+      context.action == null || WIDTH_CHANGING_ACTIONS.has(context.action);
+    const videoWidth =
+      !gestureResized && typeof prevWidth === "number" && Number.isFinite(prevWidth) && prevWidth > 0
+        ? prevWidth
+        : ((object.width ?? 0) * (object.scaleX ?? 1)) / context.canvasMetadata.scaleX;
     // Preserve the stored size unless the gesture genuinely scaled the element. An unknown
     // action (legacy caller that passes none) still recomputes, so this can only ever narrow
     // the set of writes, never invent one.
