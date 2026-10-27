@@ -58,14 +58,24 @@ export interface SeamTrackLike {
 }
 
 export interface SeamGiveBackPlan {
-  /** Timeline time of the A|B seam BEFORE the give-back (i.e. the clip's current end). */
+  /**
+   * Timeline time of the A|B seam BEFORE the give-back: the clip's current end for the right edge,
+   * its current start for the left edge.
+   */
   seam: number;
   /** Timeline seconds actually reclaimed (already capped by the budget). */
   delta: number;
-  /** The clip's new end — `seam + delta`. */
+  /** The clip's new end. */
   clampedEnd: number;
-  /** One `editor.updateElements` batch: every follower shifted/healed, then the clip grown. */
-  updates: Array<{ elementId: string; updates: { s: number; e: number } }>;
+  /**
+   * One `editor.updateElements` batch: every follower shifted/healed, then the clip grown. The
+   * left edge also moves the clip's in-point back, so its entry carries `props` with the new
+   * `time` in the SAME patch as its new end — never a window that reads past its own footage.
+   */
+  updates: Array<{
+    elementId: string;
+    updates: { s: number; e: number; props?: Record<string, unknown> };
+  }>;
   /**
    * SECOND `editor.updateElements` batch, props only, applied inside the SAME `batchHistory`.
    *
@@ -301,6 +311,94 @@ export function reclaimMapForTrack(track: SeamTrackLike): Map<string, number> {
 }
 
 /**
+ * SOURCE seconds a clip may reclaim at its LEFT edge — the mirror of `budgetFromCoords`.
+ *
+ * Growing `clip` leftwards by `g` reveals source `[in - g, in]`, which must miss every other
+ * same-source clip's window, so for any C that starts earlier in the file, `g <= in - outPoint(C)`
+ * (a C that already covers `in` makes that negative and the budget floors at 0, as a reorder does on
+ * the right). An INTERIOR seam keeps the right edge's rules: a same-source neighbour, and nothing
+ * offered when no clip of ours sits earlier in the file. The FIRST clip has no neighbour: what it
+ * can take back is the opening the cut removed, down to the start of the file.
+ */
+function headBudgetFromCoords(
+  clip: SeamCoords,
+  prev: SeamCoords | undefined,
+  siblings: readonly SeamCoords[]
+): number {
+  if (!clip.src || (prev && clip.src !== prev.src)) return 0;
+
+  const inPt = clip.inPoint;
+  let budget = Infinity;
+
+  for (const c of siblings) {
+    if (c.id === clip.id) continue;
+    if (c.src !== clip.src) continue;
+    if (c.inPoint >= inPt - SRC_EPS) continue; // shows only source after ours
+    const room = inPt - c.outPoint;
+    if (room < budget) budget = room;
+  }
+
+  // Nothing of ours earlier in the file: an interior seam has no removed stretch to measure, and the
+  // first clip may take back everything down to the start of the file. Every finite term above is
+  // `in - outPoint(C)`, already short of the start of the file.
+  if (!Number.isFinite(budget)) {
+    if (prev) return 0;
+    budget = inPt;
+  }
+
+  return budget > SRC_EPS ? budget : 0;
+}
+
+/**
+ * Every main-track clip's reclaimable TIMELINE seconds at its LEFT edge, in one pass. Same
+ * contiguity gate as the right edge — the clip must touch its neighbour, or sit at 0:00 when it is
+ * the first — because the give-back is the inverse of a ripple, and a ripple leaves no gap.
+ */
+export function startReclaimMapForTrack(track: SeamTrackLike): Map<string, number> {
+  const out = new Map<string, number>();
+  const coords = sortedByStart(track?.getElements?.() ?? []).map(coordsOf);
+
+  for (let i = 0; i < coords.length; i++) {
+    const clip = coords[i];
+    const prev = i > 0 ? coords[i - 1] : undefined;
+    if (clip.start - (prev ? prev.end : 0) > SEAM_EPS) continue;
+
+    const budget = headBudgetFromCoords(clip, prev, coords);
+    if (budget <= SRC_EPS) continue;
+
+    out.set(clip.id, budget / clip.rate);
+  }
+
+  return out;
+}
+
+/** Below this, a tail is rounding between a clip's end and its file's length, not a cut. */
+const MIN_TAIL_RECLAIM = 0.05;
+
+/**
+ * TIMELINE seconds the LAST main-track clip can be dragged out to the right. Its handle always
+ * could (nothing follows it, so today's source-capped trim does it), but it looked like any other
+ * handle, so a cut end of video never read as recoverable. This number only drives the green
+ * handle, its tooltip and where the drag stops. Same duplication guard as the right edge: never
+ * past footage another same-source clip shows.
+ */
+export function tailReclaimForTrack(track: SeamTrackLike): number {
+  const coords = sortedByStart(track?.getElements?.() ?? []).map(coordsOf);
+  const last = coords[coords.length - 1];
+  if (!last || !last.src || !(last.srcDur > 0)) return 0;
+
+  let budget = last.srcDur - last.outPoint;
+  for (const c of coords) {
+    if (c.id === last.id || c.src !== last.src) continue;
+    if (c.outPoint <= last.outPoint + SRC_EPS) continue;
+    budget = Math.min(budget, c.inPoint - last.outPoint);
+  }
+
+  const seconds = budget / last.rate;
+  return seconds >= MIN_TAIL_RECLAIM ? seconds : 0;
+}
+
+/**
  * Timeline start of the main-track clip immediately right of `elementId`, or null when there is
  * none. This is TODAY'S end-handle clamp, and the commit path needs it by name: when
  * `planSeamGiveBack` declines, `clampedEnd` still carries the view's WIDENED value and nothing else
@@ -322,6 +420,26 @@ export function mainSeamNeighbourStart(
   return els[i + 1].getStart();
 }
 
+/**
+ * Timeline end of the main-track clip immediately left of `elementId` (0:00 for the first clip),
+ * or null when it is not a main-track clip. TODAY'S start-handle clamp, needed by name for the same
+ * reason as `mainSeamNeighbourStart`: when `planSeamGiveBackStart` declines, the start arrives from
+ * the view already WIDENED past the neighbour, and the ordinary trim would overlap it.
+ */
+export function mainSeamNeighbourEnd(
+  tracks: readonly SeamTrackLike[],
+  elementId: string,
+  mainTrackName: string = MAIN_TRACK_NAME
+): number | null {
+  if (!Array.isArray(tracks)) return null;
+  const main = tracks.find((t) => t.getName?.() === mainTrackName);
+  if (!main) return null;
+  const els = sortedByStart(main.getElements() ?? []);
+  const i = els.findIndex((e) => e.getId() === elementId);
+  if (i === -1) return null;
+  return i === 0 ? 0 : els[i - 1].getEnd();
+}
+
 /** Timeline time the END handle may not pass — the neighbour's start, widened by the budget. */
 export function endHandleLimit(
   nextStart: number | null,
@@ -329,6 +447,35 @@ export function endHandleLimit(
 ): number | null {
   if (nextStart === null || !Number.isFinite(nextStart)) return null;
   return nextStart + Math.max(0, reclaimSeconds || 0);
+}
+
+/**
+ * Timeline time the START handle may not pass while reclaiming — the clip's own start (the seam),
+ * widened LEFT by the budget. Null when there is nothing to take back, which leaves today's clamp
+ * at the neighbour's end untouched. May be negative for the first clip: that is a request, never a
+ * position (see `startReclaimGrow`).
+ */
+export function startHandleLimit(
+  clipStart: number,
+  startReclaimSeconds: number
+): number | null {
+  if (!(startReclaimSeconds > SEAM_EPS) || !Number.isFinite(clipStart)) return null;
+  return clipStart - startReclaimSeconds;
+}
+
+/**
+ * How far a left-edge drag has reached past the seam, in timeline seconds, capped at the budget.
+ * 0 for a plain trim (still right of the seam) or a clip with nothing to take back. The view's
+ * "is this a reclaim" test and its drawing both read this, so the two cannot disagree.
+ */
+export function startReclaimGrow(
+  clipStart: number,
+  requestedStart: number,
+  startReclaimSeconds: number
+): number {
+  if (!(startReclaimSeconds > SEAM_EPS)) return 0;
+  const grow = Math.min(clipStart - requestedStart, startReclaimSeconds);
+  return grow > SEAM_EPS ? grow : 0;
 }
 
 /**
@@ -418,8 +565,10 @@ export function reclaimAffordance(args: {
    * `cursor: ew-resize` overrides the clip's `not-allowed`, so even the cursor lied).
    */
   locked?: boolean;
+  /** The LAST clip: nothing follows it, so the tooltip must not promise anything slides. */
+  trailing?: boolean;
 }): ReclaimAffordance {
-  const { reclaimSeconds, nextStart, start, end, locked } = args;
+  const { reclaimSeconds, nextStart, start, end, locked, trailing } = args;
   const limit = endHandleLimit(nextStart, reclaimSeconds);
   const canReclaim = !locked && reclaimSeconds > SEAM_EPS && limit !== null;
   if (!canReclaim) return { canReclaim: false, remaining: 0, bandPct: 0 };
@@ -429,7 +578,36 @@ export function reclaimAffordance(args: {
     canReclaim: true,
     remaining,
     bandPct: width > 0 ? (remaining / width) * 100 : 0,
-    label: `Drag right to take back up to ${formatReclaim(
+    label: `Drag right to take back up to ${formatReclaim(reclaimSeconds)} of removed footage${
+      trailing ? "" : " (everything after slides right)"
+    }`,
+  };
+}
+
+/**
+ * The LEFT edge's affordance — same must-fix #2, same single source of truth (the budget the clamp
+ * uses). The band sits over the neighbour to the LEFT and drains as the drag consumes the budget;
+ * the first clip has nothing to its left, so it gets the green handle and the tooltip only.
+ */
+export function startReclaimAffordance(args: {
+  reclaimSeconds: number;
+  /** The clip's committed start: the seam its left edge reclaims across. */
+  clipStart: number;
+  /** The live drag position of the left edge — left of the seam while reclaiming. */
+  start: number;
+  /** The clip's DRAWN width in timeline seconds, the band's containing block. */
+  width: number;
+  /** Same as the right edge: a locked track cannot be trimmed, so it advertises nothing. */
+  locked?: boolean;
+}): ReclaimAffordance {
+  const { reclaimSeconds, clipStart, start, width, locked } = args;
+  if (locked || !(reclaimSeconds > SEAM_EPS)) return { canReclaim: false, remaining: 0, bandPct: 0 };
+  const remaining = Math.max(0, reclaimSeconds - startReclaimGrow(clipStart, start, reclaimSeconds));
+  return {
+    canReclaim: true,
+    remaining,
+    bandPct: clipStart > SEAM_EPS && width > 0 ? (remaining / width) * 100 : 0,
+    label: `Drag left to take back up to ${formatReclaim(
       reclaimSeconds
     )} of removed footage (everything after slides right)`,
   };
@@ -613,6 +791,83 @@ export function planSeamGiveBack(
 
   const clampedEnd = seam + delta;
 
+  // The clip may not read past the end of its own file.
+  const srcDur = resolveSourceDuration(clip);
+  if (srcDur > 0) {
+    const projectedOut = inPointOf(clip) + (clampedEnd - clip.getStart()) * rateOf(clip);
+    if (projectedOut > srcDur + SRC_EPS) return null;
+  }
+
+  return projectGiveBack(tracks, main, mainEls, elementId, seam, delta, {
+    s: clip.getStart(),
+    e: clampedEnd,
+  });
+}
+
+/**
+ * The LEFT edge's give-back, for the clip AFTER a cut, and for the first clip when the cut took the
+ * opening. The clip keeps its place on the timeline, its in-point moves back by what is taken back,
+ * and it and everything after it slide right: the same edit as dragging the neighbour's right edge,
+ * except the restored frames come from the END of the removed stretch (the part nearest this clip)
+ * instead of its start. Same budget, so it can never show a frame the neighbour shows.
+ *
+ * `requestedStart` is where the creator dragged the left edge: left of the clip's start, and below
+ * 0:00 for the first clip. A refusal is null, and the caller keeps today's clamp at the neighbour.
+ *
+ * KNOWN LIMIT at the opening: the cut left nothing BEFORE 0:00 to heal, so a music bed that starts
+ * at 0:00 slides right with everything else and the restored opening plays without it. Healing it
+ * backwards would need evidence the cut shortened it, and an in-point above 0 is not that evidence
+ * (the creator may have trimmed the song's intro) — the same rule as the straddlers.
+ */
+export function planSeamGiveBackStart(
+  tracks: readonly SeamTrackLike[],
+  elementId: string,
+  requestedStart: number,
+  mainTrackName: string = MAIN_TRACK_NAME
+): SeamGiveBackPlan | null {
+  if (!Array.isArray(tracks) || tracks.length === 0) return null;
+  if (!Number.isFinite(requestedStart)) return null;
+
+  const main = tracks.find((t) => t.getName?.() === mainTrackName);
+  if (!main) return null;
+
+  const mainEls = sortedByStart(main.getElements() ?? []);
+  const clip = mainEls.find((e) => e.getId() === elementId);
+  if (!clip) return null; // not a main-track clip — ordinary trim
+
+  const seam = clip.getStart();
+  const delta = startReclaimGrow(
+    seam,
+    requestedStart,
+    startReclaimMapForTrack(main).get(elementId) ?? 0
+  );
+  if (delta <= 0) return null; // a plain trim, a sub-millisecond nudge, or nothing to take back
+
+  // The new in-point. The budget already stops at the start of the file; this is the belt.
+  const inPt = inPointOf(clip) - delta * rateOf(clip);
+  if (inPt < -SRC_EPS) return null;
+
+  return projectGiveBack(tracks, main, mainEls, elementId, seam, delta, {
+    s: seam,
+    e: clip.getEnd() + delta,
+    props: { ...(clip.getProps?.() ?? {}), time: Math.max(0, inPt) },
+  });
+}
+
+/**
+ * The edit both edges share, projected and verified before anything mutates: every element at or
+ * after `seam` slides right by `delta`, every straddler the cut damaged is healed (`planSeamGiveBack`
+ * documents each rule and why), then `clipUpdate` lands. Null means "do not apply".
+ */
+function projectGiveBack(
+  tracks: readonly SeamTrackLike[],
+  main: SeamTrackLike,
+  mainEls: readonly SeamElementLike[],
+  elementId: string,
+  seam: number,
+  delta: number,
+  clipUpdate: { s: number; e: number; props?: Record<string, unknown> }
+): SeamGiveBackPlan | null {
   // Followers first (farthest-first), the clip last. `Track.updateElement` deliberately does NOT
   // collision-guard, so ordering cannot reject a patch — but committing the growth only after the
   // room exists keeps every intermediate state legal for anything that reads mid-batch.
@@ -635,6 +890,11 @@ export function planSeamGiveBack(
       }
       // 2. Ends before the seam — the cut never touched it.
       if (e <= seam - SEAM_EPS) continue;
+
+      // The main track is never healed. On the right edge its only clip at the seam is the one
+      // growing; on the left edge it is the NEIGHBOUR, whose split signature is real — growing it
+      // as well would show the reclaimed frames twice.
+      if (track === main) continue;
 
       // 3. Anchored before the seam and reaching it — heal it, but ONLY with evidence the ripple
       //    actually damaged it. "It spans the seam" is not evidence: elements added AFTER the cut
@@ -685,7 +945,7 @@ export function planSeamGiveBack(
   const projected = new Map<string, { s: number; e: number }>();
   for (const f of followers) projected.set(f.el.getId(), { s: f.s, e: f.e });
   for (const h of healed) projected.set(h.el.getId(), { s: h.s, e: h.e });
-  projected.set(elementId, { s: clip.getStart(), e: clampedEnd });
+  projected.set(elementId, { s: clipUpdate.s, e: clipUpdate.e });
 
   const posOf = (el: SeamElementLike) =>
     projected.get(el.getId()) ?? { s: el.getStart(), e: el.getEnd() };
@@ -706,23 +966,16 @@ export function planSeamGiveBack(
     if (b.s < a.e - SEAM_EPS) return null;
   }
 
-  // 3. The clip may not read past the end of its own file.
-  const srcDur = resolveSourceDuration(clip);
-  if (srcDur > 0) {
-    const projectedOut = inPointOf(clip) + (clampedEnd - clip.getStart()) * rateOf(clip);
-    if (projectedOut > srcDur + SRC_EPS) return null;
-  }
-
   return {
     seam,
     delta,
-    clampedEnd,
+    clampedEnd: clipUpdate.e,
     // Followers first (farthest-first) so the room exists before anything grows into it, then the
     // healed straddlers, then the clip. Every intermediate state stays legal for a mid-batch read.
     updates: [
       ...followers.map((f) => ({ elementId: f.el.getId(), updates: { s: f.s, e: f.e } })),
       ...healed.map((h) => ({ elementId: h.el.getId(), updates: { s: h.s, e: h.e } })),
-      { elementId, updates: { s: clip.getStart(), e: clampedEnd } },
+      { elementId, updates: clipUpdate },
     ],
     propUpdates,
     followerCount: followers.length,

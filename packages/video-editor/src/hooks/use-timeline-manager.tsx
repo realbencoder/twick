@@ -15,8 +15,10 @@ import { DRAG_TYPE } from "../helpers/constants";
 import type { DropTarget } from "../utils/drop-target";
 
 import {
+  mainSeamNeighbourEnd,
   mainSeamNeighbourStart,
   planSeamGiveBack,
+  planSeamGiveBackStart,
   resolveSourceDuration,
 } from "../helpers/seam-give-back";
 
@@ -151,7 +153,27 @@ export const useTimelineManager = (): TimelineManagerReturn => {
     // no longer where the creator had placed it). One composed bound: the handle stops at whichever
     // comes first — the timeline origin, or the source running out of head-room.
     let clampedStart = updates.start;
-    if (dragType === DRAG_TYPE.START) {
+    // GIVE-BACK, LEFT EDGE — the mirror of the end-handle block below, for the clip AFTER a cut and
+    // for the first clip when the cut took the opening. The view sends a start LEFT of the clip's
+    // own (below 0:00 for the first clip); `planSeamGiveBackStart` caps it at what the cut removed
+    // and returns the one batch that moves this clip's in-point back and slides it and everything
+    // after it right. It runs BEFORE the ordinary block below, which mutates the in-point at once.
+    // A refusal restores today's clamp at the neighbour's end, for the same reason as the end
+    // handle: the view already widened the request, and nothing else here clamps it.
+    let seamPlan: ReturnType<typeof planSeamGiveBack> = null;
+    if (dragType === DRAG_TYPE.START && updates.start < element.getStart()) {
+      const neighbourEnd = mainSeamNeighbourEnd(tracks, element.getId());
+      try {
+        seamPlan = planSeamGiveBackStart(tracks, element.getId(), updates.start);
+      } catch (err) {
+        console.error("[give-back] left-edge plan failed (ordinary trim applied):", err);
+        seamPlan = null;
+      }
+      if (!seamPlan && neighbourEnd !== null && clampedStart < neighbourEnd) {
+        clampedStart = neighbourEnd;
+      }
+    }
+    if (dragType === DRAG_TYPE.START && !seamPlan) {
       // Everything stops at the timeline origin — an element cannot begin before 0:00.
       if (clampedStart < 0) clampedStart = 0;
       if (element instanceof VideoElement || element instanceof AudioElement) {
@@ -220,7 +242,6 @@ export const useTimelineManager = (): TimelineManagerReturn => {
     // single-element trim below. That is deliberate: `updateElements` mutates `currentData.tracks`
     // live with no clone, unlike rippleDeleteRanges/reorderMainTrackElement which commit
     // all-or-nothing off a deep copy, so the check has to happen before the first mutation.
-    let seamPlan: ReturnType<typeof planSeamGiveBack> = null;
     if (dragType === DRAG_TYPE.END && clampedEnd > element.getEnd()) {
       // TODAY'S CLAMP, captured before the attempt. `clampedEnd` arrives from the view already
       // WIDENED by the reclaim budget, and nothing else on this path clamps it against the

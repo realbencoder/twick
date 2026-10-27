@@ -4,7 +4,11 @@ import "../../styles/timeline.css";
 import TrackElementView from "./track-element";
 import { ElementColors } from "../../helpers/types";
 import { isMainVideoTrack } from "../../helpers/editor.utils";
-import { reclaimMapForTrack } from "../../helpers/seam-give-back";
+import {
+  reclaimMapForTrack,
+  startReclaimMapForTrack,
+  tailReclaimForTrack,
+} from "../../helpers/seam-give-back";
 
 /** Shared empty map — a fresh `new Map()` per render would defeat the memo for every other track. */
 const EMPTY_RECLAIM: ReadonlyMap<string, number> = new Map<string, number>();
@@ -68,6 +72,15 @@ const TrackBase = memo(({
     // signal that a clip moved, split or was trimmed — i.e. when these budgets can change.
     [isMainTrack, track, elements]
   );
+  // The same headroom for every LEFT edge, and for the last clip's tail. Same gate, same memo key.
+  const startReclaimByElement = useMemo(
+    () => (isMainTrack ? startReclaimMapForTrack(track) : EMPTY_RECLAIM),
+    [isMainTrack, track, elements]
+  );
+  const tailReclaim = useMemo(
+    () => (isMainTrack ? tailReclaimForTrack(track) : 0),
+    [isMainTrack, track, elements]
+  );
   return (
     <div
       ref={trackRef}
@@ -99,6 +112,8 @@ const TrackBase = memo(({
           isMainVideoTrack={isMainTrack}
           mainTrackElementCount={isMainTrack ? (elements?.length ?? 0) : 0}
           reclaimSeconds={reclaimByElement.get(element.getId()) ?? 0}
+          startReclaimSeconds={startReclaimByElement.get(element.getId()) ?? 0}
+          tailReclaimSeconds={index === elements.length - 1 ? tailReclaim : 0}
           onReorderStateChange={onReorderStateChange}
           locked={(track.getProps() as { locked?: boolean } | undefined)?.locked === true}
           nextStart={

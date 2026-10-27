@@ -21,6 +21,9 @@ import {
   endHandleSnapTargets,
   reclaimAffordance,
   snapFloorForGrowth,
+  startHandleLimit,
+  startReclaimAffordance,
+  startReclaimGrow,
 } from "../../helpers/seam-give-back";
 import { drawClipWaveform, getTimelineWaveform } from "../../helpers/waveform-render";
 import { drawClipFilmstrip, getFilmstripMeta } from "../../helpers/filmstrip-render";
@@ -97,6 +100,16 @@ interface TrackElementViewProps {
    * tooltip can never advertise headroom the commit refuses.
    */
   reclaimSeconds?: number;
+  /**
+   * The same, for the LEFT edge: what a cut removed just before this clip, or the opening for the
+   * first clip. 0 everywhere it doesn't apply, which is today's behaviour.
+   */
+  startReclaimSeconds?: number;
+  /**
+   * The LAST clip only: how far its right edge can go back out (its cut tail). It always could; this
+   * makes it say so, and stops the drag where the footage ends. 0 for every other clip.
+   */
+  tailReclaimSeconds?: number;
   /** Reorder lift/settle notifications (ghost + caret visuals live in timeline-view). */
   onReorderStateChange?: (active: boolean, element?: TrackElement, thumbUrl?: string | null) => void;
 }
@@ -123,6 +136,8 @@ export const TrackElementView = memo(({
   locked = false,
   mainTrackElementCount,
   reclaimSeconds = 0,
+  startReclaimSeconds = 0,
+  tailReclaimSeconds = 0,
   onReorderStateChange,
 }: TrackElementViewProps) => {
   const ref = useRef<HTMLDivElement>(null);
@@ -683,13 +698,28 @@ export const TrackElementView = memo(({
     dragType.current = DRAG_TYPE.START;
     if (last) { rawEdgeRef.current = null; return; } // Keep dragType as START so sendUpdate adjusts startAt
     const snapTargets = getSnapTargets?.(element.getId()) ?? [];
+    // GIVE-BACK (left edge), the mirror of the end handle: a clip whose left edge touches a cut may
+    // be dragged left by what the cut removed there (helpers/seam-give-back.ts). Null whenever there
+    // is nothing to take back, which leaves today's clamp at the neighbour exactly as it was.
+    const reclaimFloor = allowOverlap ? null : startHandleLimit(element.getStart(), startReclaimSeconds);
     setPosition((prev) => {
       let raw = (rawEdgeRef.current ?? prev.start) + (dx / parentWidth) * duration;
-      raw = Math.max(0, Math.min(raw, prev.end - MIN_DURATION));
-      if (prevEnd !== null && !allowOverlap && raw < prevEnd) {
-        raw = prevEnd;
+      raw = Math.min(raw, prev.end - MIN_DURATION);
+      if (reclaimFloor !== null) {
+        raw = Math.max(raw, reclaimFloor);
+      } else {
+        raw = Math.max(0, raw);
+        if (prevEnd !== null && !allowOverlap && raw < prevEnd) {
+          raw = prevEnd;
+        }
       }
       rawEdgeRef.current = raw;
+      // Past the seam this is a reclaim, and nothing snaps: the seam is a snap target (the
+      // neighbour's end) and would pull the edge straight back, the end handle's must-fix #1. The
+      // request goes to the commit as-is, which turns it into the ripple.
+      if (startReclaimGrow(element.getStart(), raw, startReclaimSeconds) > 0) {
+        return { start: raw, end: prev.end };
+      }
       let newStart = raw;
       // Snap the leading edge for DISPLAY, then re-honor the same clamps.
       if (snapTargets.length) {
@@ -704,6 +734,12 @@ export const TrackElementView = memo(({
       };
     });
   });
+
+  // What the END handle measures its reclaim from: the neighbour's start, or — on the LAST clip,
+  // which has no neighbour — its own end, so a cut tail gets the same clamp, snap handling and
+  // affordance as an interior seam. Null for every other last clip, which keeps today's path.
+  const endAnchor = nextStart ?? (tailReclaimSeconds > 0 ? element.getEnd() : null);
+  const endReclaim = nextStart !== null ? reclaimSeconds : tailReclaimSeconds;
 
   const bindEndHandle = useDrag(({ delta: [dx], event, first, last }) => {
     if (locked) return; // locked track — clips can't be trimmed
@@ -724,7 +760,7 @@ export const TrackElementView = memo(({
       // this reduces to the original `raw > nextStart → nextStart` clamp by construction.
       // Note: end clamping for overlays is handled in onElementDrag (useTimelineManager)
       // where editor context is available to check track type.
-      const endLimit = endHandleLimit(nextStart, reclaimSeconds);
+      const endLimit = endHandleLimit(endAnchor, endReclaim);
       if (!allowOverlap) {
         if (endLimit !== null && raw > endLimit) {
           raw = endLimit;
@@ -736,14 +772,14 @@ export const TrackElementView = memo(({
       // dropped while growing past it — see endHandleSnapTargets (must-fix #1: otherwise the handle
       // snaps straight back and the whole feature is invisible).
       if (snapTargets.length) {
-        const targets = endHandleSnapTargets(snapTargets, raw, nextStart, reclaimSeconds);
+        const targets = endHandleSnapTargets(snapTargets, raw, endAnchor, endReclaim);
         let snapped = targets.length ? snapEdgeTime(raw, targets) : raw;
         snapped = Math.max(snapped, prev.start + MIN_DURATION);
         // Dropping the seam target removed the nearest target; the next survivor can be BEHIND the
         // seam (the previous clip's end is this clip's start), and the capture radius is pixels, so
         // at low zoom it is seconds wide. Without this floor a rightward reclaim drag snapped
         // backward and silently DELETED footage. See snapFloorForGrowth.
-        snapped = snapFloorForGrowth(snapped, raw, nextStart, reclaimSeconds);
+        snapped = snapFloorForGrowth(snapped, raw, endAnchor, endReclaim);
         if (!allowOverlap && endLimit !== null && snapped > endLimit) snapped = endLimit;
         newEnd = snapped;
       }
@@ -801,6 +837,12 @@ export const TrackElementView = memo(({
         lastPosRef.current.end !== position.end;
       if (didChange || dropPointer) {
         onDrag(payload, dropPointer);
+      }
+      // Show what LANDED. An edge drag commits synchronously and may keep less than the drag drew —
+      // a refused give-back keeps nothing — while the sync effect only re-fires when the element's
+      // start or end changed, so the view would go on drawing the refused request.
+      if (gesture === DRAG_TYPE.START || gesture === DRAG_TYPE.END) {
+        setPosition({ start: element.getStart(), end: element.getEnd() });
       }
     }
     // AFTER onDrag: the view's routing guard + onMainReorder run synchronously inside it and
@@ -912,10 +954,30 @@ export const TrackElementView = memo(({
     bandPct: reclaimBandPct,
     label: reclaimTitle,
   } = reclaimAffordance({
-    reclaimSeconds,
-    nextStart,
+    reclaimSeconds: endReclaim,
+    nextStart: endAnchor,
     start: position.start,
     end: position.end,
+    locked,
+    trailing: nextStart === null,
+  });
+
+  // LEFT-EDGE GIVE-BACK, DRAWN. The drag requests "start earlier", but a main-track clip cannot
+  // slide over its neighbour: the commit keeps it in place and pushes it and everything after it
+  // right. So that is what is drawn while dragging — the clip grows to the RIGHT as its left edge is
+  // pulled left — and the release does not jump. Every other gesture draws `position` as before.
+  const startGrow = startReclaimGrow(element.getStart(), position.start, startReclaimSeconds);
+  const shown =
+    startGrow > 0 ? { start: element.getStart(), end: position.end + startGrow } : position;
+  const {
+    canReclaim: canReclaimStart,
+    bandPct: startBandPct,
+    label: startReclaimTitle,
+  } = startReclaimAffordance({
+    reclaimSeconds: startReclaimSeconds,
+    clipStart: element.getStart(),
+    start: position.start,
+    width: shown.end - shown.start,
     locked,
   });
 
@@ -965,8 +1027,8 @@ export const TrackElementView = memo(({
     },
     style: {
       backgroundColor: getElementColor(element.getType()),
-      width: `${((position.end - position.start) / duration) * 100}%`,
-      left: `${(position.start / duration) * 100}%`,
+      width: `${((shown.end - shown.start) / duration) * 100}%`,
+      left: `${(shown.start / duration) * 100}%`,
       touchAction: "none",
       // Locked clips get a not-allowed cursor + slight dim so a drag-that-does-nothing reads as
       // "protected", not "broken" (drag/trim/delete/split are all gated when locked).
@@ -1031,11 +1093,34 @@ export const TrackElementView = memo(({
             }}
           />
         ))}
+        {hasHandles && canReclaimStart && startBandPct > 0 ? (
+          <div
+            className="twick-track-element-reclaim-band"
+            title={startReclaimTitle}
+            style={{
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              right: "100%",
+              width: `${startBandPct}%`,
+              zIndex: 4,
+              pointerEvents: "none",
+              // The stylesheet draws this band for the RIGHT edge (open on its left). Mirrored inline:
+              // inline beats the layered rule, and a new class would mean rebuilding studio.css.
+              borderLeft: "1px dashed rgba(74, 222, 128, 0.85)",
+              borderRight: "none",
+              borderRadius: "4px 0 0 4px",
+            }}
+          />
+        ) : null}
         {hasHandles ? (
           <div
             style={{ touchAction: "none" , zIndex: isSelected? 100 : 1}}
             {...bindStartHandle()}
-            className="twick-track-element-handle twick-track-element-handle-start"
+            title={startReclaimTitle}
+            className={`twick-track-element-handle twick-track-element-handle-start${
+              canReclaimStart ? " twick-track-element-handle-reclaim" : ""
+            }`}
           />
         ) : null}
         {showAudioBadge ? (
