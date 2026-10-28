@@ -1195,11 +1195,22 @@ export class TimelineEditor {
    * public rippleDelete would produce N undo entries — the same bug class the cut-core work fixed.)
    */
   async rippleDeleteRanges(ranges: Array<[number, number]>): Promise<void> {
-    const valid = ranges
-      .filter(([f, t]) => f < t)
-      .sort((a, b) => b[0] - a[0]); // descending fromTime → back-to-front
-    if (valid.length === 0) return;
     const currentTracks = this.getTimelineData()?.tracks ?? [];
+    // Widen every range against the layout BEFORE any cut, then merge: widening one range back
+    // onto a clip start can reach into the range before it, whose coordinates the back-to-front
+    // order below assumes no later cut has touched.
+    const widened = ranges
+      .filter(([f, t]) => f < t)
+      .map(([f, t]) => this.widenToMainTrackEdges(currentTracks, f, t))
+      .sort((a, b) => a[0] - b[0]);
+    const merged: Array<[number, number]> = [];
+    for (const [f, t] of widened) {
+      const last = merged[merged.length - 1];
+      if (last && f <= last[1]) last[1] = Math.max(last[1], t);
+      else merged.push([f, t]);
+    }
+    const valid = merged.reverse(); // descending fromTime → back-to-front
+    if (valid.length === 0) return;
     const newTracks = currentTracks.map((t) => Track.fromJSON(t.serialize()));
     for (const [f, t] of valid) {
       this.applyRippleToTracks(newTracks, f, t);
@@ -1440,8 +1451,36 @@ export class TimelineEditor {
     }
   }
 
+  /**
+   * Widen a range cut so it never leaves a MAIN-track piece shorter than one frame: a cut starting
+   * less than MIN_SPLIT_PIECE_SECONDS into a clip starts at the clip, and one ending less than that
+   * before a clip's end ends there. Without this the branches below kept the piece. The refused
+   * split near a clip's START shortened the clip by the cut alone while advancing its source past
+   * the piece too, so the clip played that much PAST its out-point (the start of whatever an
+   * earlier cut removed); the cover branches kept the piece as a sliver clip. Deleting transcript
+   * words one at a time, left to right, hit the first on every delete.
+   *
+   * Main track only (the track named "Video", as in rippleRemoveElement and closeVideoTrackGaps).
+   * The widened range is applied to EVERY track, so captions and overlays stay in step with it.
+   */
+  private widenToMainTrackEdges(tracks: Track[], fromTime: number, toTime: number): [number, number] {
+    const main = tracks.find((t) => t.getName() === "Video");
+    let from = fromTime;
+    let to = toTime;
+    for (const el of main?.getElements() ?? []) {
+      const type = el.getType().toLowerCase();
+      if (type !== "video" && type !== "audio") continue;
+      const start = el.getStart();
+      const end = el.getEnd();
+      if (start < from && from < end && from - start < MIN_SPLIT_PIECE_SECONDS) from = start;
+      if (start < to && to < end && end - to < MIN_SPLIT_PIECE_SECONDS) to = end;
+    }
+    return [from, to];
+  }
+
   private applyRippleToTracks(tracks: Track[], fromTime: number, toTime: number): void {
     if (fromTime >= toTime) return;
+    [fromTime, toTime] = this.widenToMainTrackEdges(tracks, fromTime, toTime);
     const durationToRemove = toTime - fromTime;
     for (const newTrack of tracks) {
       const friend = newTrack.createFriend();
@@ -1506,7 +1545,8 @@ export class TimelineEditor {
               friend.addElement(result.secondElement, true);
               continue;
             }
-            // Split refused — shorten in place. WHICH side gets dropped decides whether the
+            // Split refused — shorten in place (other tracks: widenToMainTrackEdges keeps the
+            // main track's sub-frame pieces out of here). WHICH side gets dropped decides whether the
             // CUT content actually leaves the video (round-3 rework, R2-24): the refusal is a
             // sub-frame piece at one edge, and the near-START case is the one that matters —
             // fromTime within one frame of the element's start means the whole HEAD + cut window
