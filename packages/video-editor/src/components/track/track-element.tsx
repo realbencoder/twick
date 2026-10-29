@@ -106,10 +106,12 @@ interface TrackElementViewProps {
    */
   startReclaimSeconds?: number;
   /**
-   * The LAST clip only: how far its right edge can go back out (its cut tail). It always could; this
-   * makes it say so, and stops the drag where the footage ends. 0 for every other clip.
+   * The LAST main-track clip only: how far its right edge can go back out (its cut tail), 0
+   * included. It always could; this makes it say so, and stops the drag where the footage ends or
+   * where another clip's footage starts. null (every other clip, or an unknown file length) leaves
+   * the handle unclamped, as before.
    */
-  tailReclaimSeconds?: number;
+  tailReclaimSeconds?: number | null;
   /** Reorder lift/settle notifications (ghost + caret visuals live in timeline-view). */
   onReorderStateChange?: (active: boolean, element?: TrackElement, thumbUrl?: string | null) => void;
 }
@@ -137,7 +139,7 @@ export const TrackElementView = memo(({
   mainTrackElementCount,
   reclaimSeconds = 0,
   startReclaimSeconds = 0,
-  tailReclaimSeconds = 0,
+  tailReclaimSeconds = null,
   onReorderStateChange,
 }: TrackElementViewProps) => {
   const ref = useRef<HTMLDivElement>(null);
@@ -737,9 +739,10 @@ export const TrackElementView = memo(({
 
   // What the END handle measures its reclaim from: the neighbour's start, or — on the LAST clip,
   // which has no neighbour — its own end, so a cut tail gets the same clamp, snap handling and
-  // affordance as an interior seam. Null for every other last clip, which keeps today's path.
-  const endAnchor = nextStart ?? (tailReclaimSeconds > 0 ? element.getEnd() : null);
-  const endReclaim = nextStart !== null ? reclaimSeconds : tailReclaimSeconds;
+  // affordance as an interior seam, even when that budget is 0 (the handle then stops where it is).
+  // Null for every other last clip, which keeps today's path.
+  const endAnchor = nextStart ?? (tailReclaimSeconds !== null ? element.getEnd() : null);
+  const endReclaim = nextStart !== null ? reclaimSeconds : tailReclaimSeconds ?? 0;
 
   const bindEndHandle = useDrag(({ delta: [dx], event, first, last }) => {
     if (locked) return; // locked track — clips can't be trimmed
@@ -965,8 +968,12 @@ export const TrackElementView = memo(({
   // LEFT-EDGE GIVE-BACK, DRAWN. The drag requests "start earlier", but a main-track clip cannot
   // slide over its neighbour: the commit keeps it in place and pushes it and everything after it
   // right. So that is what is drawn while dragging — the clip grows to the RIGHT as its left edge is
-  // pulled left — and the release does not jump. Every other gesture draws `position` as before.
-  const startGrow = startReclaimGrow(element.getStart(), position.start, startReclaimSeconds);
+  // pulled left — and the release does not jump. Every other gesture draws `position` as before,
+  // including the one render after a commit slid this clip right, when `position` still holds the
+  // old start (it re-syncs in an effect) and would otherwise read as a reclaim. `sendUpdate` clears
+  // `dragType` and re-syncs `position` in the same batch, so the release frame is already exact.
+  const leftEdge = dragType.current === DRAG_TYPE.START ? position.start : element.getStart();
+  const startGrow = startReclaimGrow(element.getStart(), leftEdge, startReclaimSeconds);
   const shown =
     startGrow > 0 ? { start: element.getStart(), end: position.end + startGrow } : position;
   const {
@@ -976,7 +983,7 @@ export const TrackElementView = memo(({
   } = startReclaimAffordance({
     reclaimSeconds: startReclaimSeconds,
     clipStart: element.getStart(),
-    start: position.start,
+    start: leftEdge,
     width: shown.end - shown.start,
     locked,
   });

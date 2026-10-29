@@ -15,8 +15,12 @@ import { DRAG_TYPE } from "../helpers/constants";
 import type { DropTarget } from "../utils/drop-target";
 
 import {
+  eyeContactToReassert,
+  inPointOf,
   mainSeamNeighbourEnd,
   mainSeamNeighbourStart,
+  mainTailEndLimit,
+  outPointOf,
   planSeamGiveBack,
   planSeamGiveBackStart,
   resolveSourceDuration,
@@ -24,6 +28,12 @@ import {
 
 /** One frame at 30fps — the least source a clip can keep and still show a real picture. */
 const MIN_SOURCE_TAIL = 1 / 30;
+
+/**
+ * Just over half the view's millisecond rounding (0.5ms, plus float slack): an edge this close to
+ * where it was has not moved. Far below a frame, so no real trim is ever swallowed.
+ */
+const SAME_EDGE_SECONDS = 0.0006;
 
 export interface ElementDropParams {
   element: TrackElement;
@@ -153,6 +163,8 @@ export const useTimelineManager = (): TimelineManagerReturn => {
     // no longer where the creator had placed it). One composed bound: the handle stops at whichever
     // comes first — the timeline origin, or the source running out of head-room.
     let clampedStart = updates.start;
+    // The clip's SOURCE window before this gesture (the START block below mutates the in-point).
+    const sourceBefore: [number, number] = [inPointOf(element), outPointOf(element)];
     // GIVE-BACK, LEFT EDGE — the mirror of the end-handle block below, for the clip AFTER a cut and
     // for the first clip when the cut took the opening. The view sends a start LEFT of the clip's
     // own (below 0:00 for the first clip); `planSeamGiveBackStart` caps it at what the cut removed
@@ -260,11 +272,31 @@ export const useTimelineManager = (): TimelineManagerReturn => {
         console.error("[give-back] seam plan failed (ordinary trim applied):", err);
         seamPlan = null;
       }
+      // The LAST clip has no neighbour: the view stops it at its tail budget, and so does this, so
+      // a split-and-swap cannot drag it over footage another clip already shows.
+      const tailLimit = mainTailEndLimit(tracks, element.getId());
       if (seamPlan) {
         clampedEnd = seamPlan.clampedEnd;
       } else if (neighbourStart !== null && clampedEnd > neighbourStart) {
         clampedEnd = neighbourStart;
+      } else if (tailLimit !== null && clampedEnd > tailLimit) {
+        clampedEnd = tailLimit;
       }
+    }
+    // A trim that lands where the clip already was (a refused give-back clamped back to the
+    // neighbour, a handle held at its clamp, a drag released where it started) commits NOTHING.
+    // An identical patch still adds an undo entry and bumps the version, and that autosave clears
+    // a finished render's status, so the creator saw a stale-render banner with nothing changed.
+    // "Where it was" is within the view's own millisecond rounding (`getDecimalNumber`): a handle
+    // held at a clamp on an off-grid end (59.983333, the probed file length) arrives as 59.983,
+    // and committing that would also cut 0.33ms off the end of the video.
+    if (
+      !seamPlan &&
+      (dragType === DRAG_TYPE.START || dragType === DRAG_TYPE.END) &&
+      Math.abs(clampedStart - element.getStart()) <= SAME_EDGE_SECONDS &&
+      Math.abs(clampedEnd - element.getEnd()) <= SAME_EDGE_SECONDS
+    ) {
+      return;
     }
     // The trim and the caption cleanup below are ONE gesture, so they must be ONE undo entry.
     // updateElements snapshotted here and the caption cleanup then mutated tracks under a bare
@@ -328,9 +360,29 @@ export const useTimelineManager = (): TimelineManagerReturn => {
       }
     }
     });
+    if (dragType === DRAG_TYPE.START || dragType === DRAG_TYPE.END) {
+      keepEyeContactOnRestored(element, sourceBefore);
+    }
     setSelectedItem(element);
     editor.refresh();
     closeMainTrackGapsIfNeeded(element);
+  };
+
+  /**
+   * A main-track clip keeps its eye-contact state on whatever a trim or give-back brings back:
+   * the exclusions are SOURCE windows, so newly read footage would otherwise play with whatever
+   * state was set for it before, in the preview and the export (see `eyeContactToReassert`). Goes
+   * through the same event the eye-contact toggle sends, so the app's queue merges and saves it.
+   */
+  const keepEyeContactOnRestored = (element: TrackElement, before: [number, number]) => {
+    const bridge = (window as any).__twick_eyecontact as
+      | { ranges?: Array<[number, number]>; active?: boolean; mainTrackId?: string }
+      | null
+      | undefined;
+    if (!bridge?.active || element.getTrackId() !== bridge.mainTrackId) return;
+    const after: [number, number] = [inPointOf(element), outPointOf(element)];
+    const toggle = eyeContactToReassert(before, after, bridge.ranges);
+    if (toggle) window.dispatchEvent(new CustomEvent("twick-eyecontact-clip", { detail: toggle }));
   };
 
   /**

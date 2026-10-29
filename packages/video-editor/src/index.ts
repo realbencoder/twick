@@ -77,6 +77,8 @@ export {
   reclaimMapForTrack,
   startReclaimMapForTrack,
   tailReclaimForTrack,
+  mainTailEndLimit,
+  eyeContactToReassert,
   mainSeamNeighbourStart,
   mainSeamNeighbourEnd,
   seamSourceBudget,
@@ -143,6 +145,11 @@ export type { TickInterval, TickRange } from "./helpers/ruler-ticks";
 // rendering the component and reading what it drew. It takes seven plain props and no context, so
 // this costs nothing structurally. See tests/unit/timeline-ruler-render.test.tsx in the app.
 export { default as SeekTrack } from "./components/track/seek-track";
+// TrackElementView (one clip on a track) is exported FOR TESTING too, for the same reason: the
+// give-back's drag clamps, what a left-edge drag draws, and when a reclaim band paints are view
+// decisions that a regex over the bundle cannot tell apart from their mutations. It takes plain
+// props and no context. See tests/unit/track-element-give-back-render.test.tsx in the app.
+export { TrackElementView } from "./components/track/track-element";
 export type {
   SeamGiveBackPlan,
   SeamElementLike,

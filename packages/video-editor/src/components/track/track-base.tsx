@@ -68,8 +68,10 @@ const TrackBase = memo(({
   // before the hoist: 7.2-10.2ms per pass at 150 clips, 27-42ms at 300.
   const reclaimByElement = useMemo(
     () => (isMainTrack ? reclaimMapForTrack(track) : EMPTY_RECLAIM),
-    // `elements` is the frozen view the engine hands out; a new array identity is exactly the
-    // signal that a clip moved, split or was trimmed — i.e. when these budgets can change.
+    // `getElements()` returns a fresh copy on every call, so in practice these recompute on every
+    // TrackBase render (which memo() already limits to selection, zoom and commits): measured at
+    // 0.5ms for all three at 150 clips, 1.8ms at 300. Do not key them on a stable reference
+    // instead: tracks and elements are mutated in place, so a hit would be a stale budget.
     [isMainTrack, track, elements]
   );
   // The same headroom for every LEFT edge, and for the last clip's tail. Same gate, same memo key.
@@ -77,8 +79,9 @@ const TrackBase = memo(({
     () => (isMainTrack ? startReclaimMapForTrack(track) : EMPTY_RECLAIM),
     [isMainTrack, track, elements]
   );
+  // null: no tail clamp on this track (not the main track, or its file length is unknown).
   const tailReclaim = useMemo(
-    () => (isMainTrack ? tailReclaimForTrack(track) : 0),
+    () => (isMainTrack ? tailReclaimForTrack(track) : null),
     [isMainTrack, track, elements]
   );
   return (
@@ -113,7 +116,7 @@ const TrackBase = memo(({
           mainTrackElementCount={isMainTrack ? (elements?.length ?? 0) : 0}
           reclaimSeconds={reclaimByElement.get(element.getId()) ?? 0}
           startReclaimSeconds={startReclaimByElement.get(element.getId()) ?? 0}
-          tailReclaimSeconds={index === elements.length - 1 ? tailReclaim : 0}
+          tailReclaimSeconds={index === elements.length - 1 ? tailReclaim : null}
           onReorderStateChange={onReorderStateChange}
           locked={(track.getProps() as { locked?: boolean } | undefined)?.locked === true}
           nextStart={

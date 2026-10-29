@@ -234,24 +234,33 @@ function budgetFromCoords(
   // be meaningless arithmetic on two different files.
   if (!clip.src || clip.src !== next.src) return 0;
 
-  const out = clip.outPoint;
-  let budget = Infinity;
-
-  for (const c of siblings) {
-    if (c.id === clip.id) continue;
-    if (c.src !== clip.src) continue;
-    if (c.outPoint <= out + SRC_EPS) continue; // shows only source we already passed
-    const room = c.inPoint - out;
-    if (room < budget) budget = room;
-  }
+  let budget = roomAfter(clip, siblings);
 
   if (!Number.isFinite(budget)) return 0;
   if (budget <= SRC_EPS) return 0; // pure split seam: nothing was removed, so nothing to give back
 
   // Never read past the end of the file.
-  if (clip.srcDur > 0) budget = Math.min(budget, clip.srcDur - out);
+  if (clip.srcDur > 0) budget = Math.min(budget, clip.srcDur - clip.outPoint);
 
   return budget > SRC_EPS ? budget : 0;
+}
+
+/**
+ * SOURCE seconds `clip` may read past its out-point before it shows a frame another same-source
+ * clip already shows: `inPoint(C) - out` over every C ending later in the file. Infinity when there
+ * is none. THE duplication guard, shared by the seam budget, the tail and the straddler heal, so a
+ * fix to it reaches all three.
+ */
+function roomAfter(clip: SeamCoords, siblings: readonly SeamCoords[]): number {
+  const out = clip.outPoint;
+  let room = Infinity;
+  for (const c of siblings) {
+    if (c.id === clip.id) continue;
+    if (c.src !== clip.src) continue;
+    if (c.outPoint <= out + SRC_EPS) continue; // shows only source we already passed
+    if (c.inPoint - out < room) room = c.inPoint - out;
+  }
+  return room;
 }
 
 const sortedByStart = (els: readonly SeamElementLike[]): SeamElementLike[] =>
@@ -372,30 +381,45 @@ export function startReclaimMapForTrack(track: SeamTrackLike): Map<string, numbe
   return out;
 }
 
-/** Below this, a tail is rounding between a clip's end and its file's length, not a cut. */
+/**
+ * Below this, a tail is rounding between a clip's end and its file's length, not a cut: the handle
+ * still stops at the budget, it just is not drawn green.
+ */
 const MIN_TAIL_RECLAIM = 0.05;
 
 /**
- * TIMELINE seconds the LAST main-track clip can be dragged out to the right. Its handle always
- * could (nothing follows it, so today's source-capped trim does it), but it looked like any other
- * handle, so a cut end of video never read as recoverable. This number only drives the green
- * handle, its tooltip and where the drag stops. Same duplication guard as the right edge: never
- * past footage another same-source clip shows.
+ * TIMELINE seconds the LAST main-track clip can be dragged out to the right, or null when its file
+ * length is unknown (then nothing clamps it but the commit's own source bound, as before). The
+ * handle and the commit both stop here, 0 included: below the green threshold the guard still
+ * holds, so a split-and-swap can never drag the last clip over footage another clip shows. Same
+ * duplication guard as the right edge (`roomAfter`).
  */
-export function tailReclaimForTrack(track: SeamTrackLike): number {
+export function tailReclaimForTrack(track: SeamTrackLike): number | null {
   const coords = sortedByStart(track?.getElements?.() ?? []).map(coordsOf);
   const last = coords[coords.length - 1];
-  if (!last || !last.src || !(last.srcDur > 0)) return 0;
+  if (!last || !last.src || !(last.srcDur > 0)) return null;
+  const budget = Math.min(last.srcDur - last.outPoint, roomAfter(last, coords));
+  return Math.max(0, budget) / last.rate;
+}
 
-  let budget = last.srcDur - last.outPoint;
-  for (const c of coords) {
-    if (c.id === last.id || c.src !== last.src) continue;
-    if (c.outPoint <= last.outPoint + SRC_EPS) continue;
-    budget = Math.min(budget, c.inPoint - last.outPoint);
-  }
-
-  const seconds = budget / last.rate;
-  return seconds >= MIN_TAIL_RECLAIM ? seconds : 0;
+/**
+ * Where the commit must stop the LAST main-track clip's end: its end plus the tail budget. Null
+ * for any other clip, or when the budget is unknown. The view clamps to the same number, so this
+ * is the belt that keeps the guarantee from resting on the view alone.
+ */
+export function mainTailEndLimit(
+  tracks: readonly SeamTrackLike[],
+  elementId: string,
+  mainTrackName: string = MAIN_TRACK_NAME
+): number | null {
+  if (!Array.isArray(tracks)) return null;
+  const main = tracks.find((t) => t.getName?.() === mainTrackName);
+  if (!main) return null;
+  const els = sortedByStart(main.getElements() ?? []);
+  const last = els[els.length - 1];
+  if (!last || last.getId() !== elementId) return null;
+  const tail = tailReclaimForTrack(main);
+  return tail === null ? null : last.getEnd() + tail;
 }
 
 /**
@@ -565,19 +589,26 @@ export function reclaimAffordance(args: {
    * `cursor: ew-resize` overrides the clip's `not-allowed`, so even the cursor lied).
    */
   locked?: boolean;
-  /** The LAST clip: nothing follows it, so the tooltip must not promise anything slides. */
+  /**
+   * The LAST clip: nothing follows it, so the tooltip must not promise anything slides, and there
+   * is no neighbour for a band to sit on (it would paint past the end of the timeline and widen
+   * its scroll area). Below MIN_TAIL_RECLAIM it is not drawn green at all.
+   */
   trailing?: boolean;
 }): ReclaimAffordance {
   const { reclaimSeconds, nextStart, start, end, locked, trailing } = args;
   const limit = endHandleLimit(nextStart, reclaimSeconds);
-  const canReclaim = !locked && reclaimSeconds > SEAM_EPS && limit !== null;
+  const canReclaim =
+    !locked &&
+    (trailing ? reclaimSeconds >= MIN_TAIL_RECLAIM : reclaimSeconds > SEAM_EPS) &&
+    limit !== null;
   if (!canReclaim) return { canReclaim: false, remaining: 0, bandPct: 0 };
   const remaining = Math.max(0, (limit as number) - end);
   const width = end - start;
   return {
     canReclaim: true,
     remaining,
-    bandPct: width > 0 ? (remaining / width) * 100 : 0,
+    bandPct: !trailing && width > 0 ? (remaining / width) * 100 : 0,
     label: `Drag right to take back up to ${formatReclaim(reclaimSeconds)} of removed footage${
       trailing ? "" : " (everything after slides right)"
     }`,
@@ -611,6 +642,41 @@ export function startReclaimAffordance(args: {
       reclaimSeconds
     )} of removed footage (everything after slides right)`,
   };
+}
+
+/**
+ * EYE CONTACT FOLLOWS THE CLIP ONTO FOOTAGE THAT COMES BACK. A clip's eye-contact state is stored
+ * as excluded SOURCE windows, judged on the clip's midpoint (the app's `isClipExcluded`). A drag
+ * that makes the clip read further into its file (a give-back on either edge, the tail) reads
+ * source whose state was set for some other moment: corrected under a clip that says Off, or a
+ * stale exclusion (an undone give-back's, or the remainder of a clip toggled On after a cut) under
+ * a clip that says On.
+ *
+ * Given the clip's source window before and after the drag, returns the toggle to re-send for its
+ * whole new window — exactly what the creator's own toggle sends — or null when it did not grow,
+ * or is On with no exclusion touching what it now reads (nothing to correct, no request). The
+ * whole window rather than the new slice: the store drops slices under 50ms, which would leave a
+ * short give-back's frames on the wrong footage. Safe for the slice because the give-back budget
+ * guarantees no other main-track clip shows it.
+ */
+export function eyeContactToReassert(
+  before: readonly [number, number],
+  after: readonly [number, number],
+  ranges: ReadonlyArray<readonly [number, number]> | null | undefined
+): { sourceStart: number; sourceEnd: number; off: boolean } | null {
+  if (!ranges?.length) return null;
+  const grewLeft = after[0] < before[0] - SRC_EPS;
+  const grewRight = after[1] > before[1] + SRC_EPS;
+  if (!grewLeft && !grewRight) return null;
+  const mid = (before[0] + before[1]) / 2;
+  const off = ranges.some(([a, b]) => mid >= a && mid < b);
+  if (!off) {
+    const touches = (lo: number, hi: number) => ranges.some(([a, b]) => a < hi && b > lo);
+    if (!(grewLeft && touches(after[0], before[0])) && !(grewRight && touches(before[1], after[1]))) {
+      return null;
+    }
+  }
+  return { sourceStart: after[0], sourceEnd: after[1], off };
 }
 
 const typeOf = (el: SeamElementLike): string => {
@@ -662,21 +728,25 @@ function healRoomSeconds(
   trackEls: readonly SeamElementLike[]
 ): number {
   if (!isTimedMedia(el)) return Infinity;
-  const src = srcOf(el);
-  const out = outPointOf(el);
-  let room = Infinity;
-  if (src) {
-    for (const c of trackEls) {
-      if (c.getId() === el.getId()) continue;
-      if (srcOf(c) !== src) continue;
-      if (outPointOf(c) <= out + SRC_EPS) continue;
-      room = Math.min(room, inPointOf(c) - out);
-    }
-  }
-  const srcDur = resolveSourceDuration(el);
-  if (srcDur > 0) room = Math.min(room, srcDur - out);
+  const c = coordsOf(el);
+  let room = c.src ? roomAfter(c, trackEls.map(coordsOf)) : Infinity;
+  if (c.srcDur > 0) room = Math.min(room, c.srcDur - c.outPoint);
   if (!Number.isFinite(room)) return Infinity;
-  return Math.max(0, room) / rateOf(el);
+  return Math.max(0, room) / c.rate;
+}
+
+/**
+ * The mirror for a LEFT-edge give-back: TIMELINE seconds the right-hand piece `el` of a split may
+ * take back at its head (its in-point moves back) before it shows source `prev` or another
+ * same-source sibling already shows, or reads before the start of its file.
+ */
+function headHealRoomSeconds(
+  el: SeamElementLike,
+  prev: SeamElementLike,
+  trackEls: readonly SeamElementLike[]
+): number {
+  const c = coordsOf(el);
+  return headBudgetFromCoords(c, coordsOf(prev), trackEls.map(coordsOf)) / c.rate;
 }
 
 /**
@@ -798,7 +868,7 @@ export function planSeamGiveBack(
     if (projectedOut > srcDur + SRC_EPS) return null;
   }
 
-  return projectGiveBack(tracks, main, mainEls, elementId, seam, delta, {
+  return projectGiveBack(tracks, main, mainEls, elementId, seam, delta, "end", {
     s: clip.getStart(),
     e: clampedEnd,
   });
@@ -814,10 +884,18 @@ export function planSeamGiveBack(
  * `requestedStart` is where the creator dragged the left edge: left of the clip's start, and below
  * 0:00 for the first clip. A refusal is null, and the caller keeps today's clamp at the neighbour.
  *
- * KNOWN LIMIT at the opening: the cut left nothing BEFORE 0:00 to heal, so a music bed that starts
- * at 0:00 slides right with everything else and the restored opening plays without it. Healing it
- * backwards would need evidence the cut shortened it, and an in-point above 0 is not that evidence
- * (the creator may have trimmed the song's intro) — the same rule as the straddlers.
+ * Because the frames come back from the END of the removed stretch, a split music bed or B-roll
+ * restores the same way: its RIGHT piece takes back its own head, and its left piece is left alone
+ * (healing the left piece's tail, as the right edge does, would play the START of the removed
+ * stretch under the end of it — out of sync by the cut minus what was taken back).
+ *
+ * At the opening, an overlay or bed that starts at 0:00 and runs to the end of the video covers
+ * what comes back (timed media by taking back its own head, in sync; anything else by staying at
+ * 0:00 and growing); everything else that starts at 0:00 slides right with the video. KNOWN
+ * LIMITS: which overlays should cover a restored opening is ambiguous (a title that once started a
+ * second in now also starts at 0:00), so only full-length ones do; and a full-length song whose
+ * intro the creator trimmed AFTER the cut gets up to `delta` of that intro back, since its in-point
+ * looks exactly like one the cut moved on.
  */
 export function planSeamGiveBackStart(
   tracks: readonly SeamTrackLike[],
@@ -847,7 +925,7 @@ export function planSeamGiveBackStart(
   const inPt = inPointOf(clip) - delta * rateOf(clip);
   if (inPt < -SRC_EPS) return null;
 
-  return projectGiveBack(tracks, main, mainEls, elementId, seam, delta, {
+  return projectGiveBack(tracks, main, mainEls, elementId, seam, delta, "start", {
     s: seam,
     e: clip.getEnd() + delta,
     props: { ...(clip.getProps?.() ?? {}), time: Math.max(0, inPt) },
@@ -858,6 +936,10 @@ export function planSeamGiveBackStart(
  * The edit both edges share, projected and verified before anything mutates: every element at or
  * after `seam` slides right by `delta`, every straddler the cut damaged is healed (`planSeamGiveBack`
  * documents each rule and why), then `clipUpdate` lands. Null means "do not apply".
+ *
+ * `edge` says which end of the removed stretch comes back: "end" restores its START (the clip
+ * before the seam reads on), "start" restores its END (the clip after the seam reads back). A split
+ * piece of timed media must restore the same end, so the two edges heal opposite pieces.
  */
 function projectGiveBack(
   tracks: readonly SeamTrackLike[],
@@ -866,14 +948,18 @@ function projectGiveBack(
   elementId: string,
   seam: number,
   delta: number,
+  edge: "end" | "start",
   clipUpdate: { s: number; e: number; props?: Record<string, unknown> }
 ): SeamGiveBackPlan | null {
   // Followers first (farthest-first), the clip last. `Track.updateElement` deliberately does NOT
   // collision-guard, so ordering cannot reject a patch — but committing the growth only after the
   // room exists keeps every intermediate state legal for anything that reads mid-batch.
-  const followers: Array<{ el: SeamElementLike; s: number; e: number }> = [];
-  const healed: Array<{ el: SeamElementLike; s: number; e: number }> = [];
+  type Move = { el: SeamElementLike; s: number; e: number; props?: Record<string, unknown> };
+  const followers: Move[] = [];
+  const healed: Move[] = [];
   const propUpdates: Array<{ elementId: string; props: Record<string, unknown> }> = [];
+  const atOpening = edge === "start" && seam <= SEAM_EPS;
+  const mainEnd = mainEls.length ? mainEls[mainEls.length - 1].getEnd() : 0;
 
   for (const track of tracks) {
     const trackEls = sortedByStart(track.getElements() ?? []);
@@ -883,8 +969,61 @@ function projectGiveBack(
       const s = el.getStart();
       const e = el.getEnd();
 
+      // 0. THE OPENING: an overlay or bed running from 0:00 to the end of the video (a watermark,
+      //    a logo, a progress bar, a music bed) covered the opening before it was cut, so it covers
+      //    it again instead of sliding off it. Captions always follow their words.
+      if (
+        atOpening &&
+        track !== main &&
+        !isCaption(el) &&
+        s <= SEAM_EPS &&
+        e >= mainEnd - SEAM_EPS
+      ) {
+        // Timed media the cut head-trimmed had its in-point moved on with the video's, so it takes
+        // its own head back, the exact inverse, and stays in sync. With no head to take back
+        // (in-point 0: added after the cut, nothing to keep in sync with) it stays at 0:00 and
+        // reads on at its end, as far as its file allows; so does anything with no source.
+        const head = isTimedMedia(el)
+          ? Math.min(delta, headBudgetFromCoords(coordsOf(el), undefined, trackEls.map(coordsOf)) / rateOf(el))
+          : 0;
+        if (head > SEAM_EPS) {
+          followers.push({
+            el,
+            s: s + delta - head,
+            e: e + delta,
+            props: { ...(el.getProps?.() ?? {}), time: inPointOf(el) - head * rateOf(el) },
+          });
+        } else {
+          const grow = Math.min(delta, healRoomSeconds(el, trackEls));
+          if (grow > SEAM_EPS) healed.push({ el, s, e: e + grow });
+        }
+        continue;
+      }
+
       // 1. Starts at or after the seam — a pure follower, the inverse of the ripple's left shift.
       if (s >= seam - SEAM_EPS) {
+        // LEFT EDGE: the right-hand piece of a split music bed or B-roll takes back its own head,
+        // the same frames the clip takes back, so it stays in sync from the seam on. If it cannot
+        // take back all of it, it starts that much later rather than playing the wrong audio.
+        const prev = trackEls[k - 1];
+        if (
+          edge === "start" &&
+          track !== main &&
+          prev &&
+          Math.abs(s - seam) <= SEAM_EPS &&
+          hasSplitSignature(prev, el, trackEls)
+        ) {
+          const grow = Math.min(delta, headHealRoomSeconds(el, prev, trackEls));
+          if (grow > SEAM_EPS) {
+            followers.push({
+              el,
+              s: s + delta - grow,
+              e: e + delta,
+              props: { ...(el.getProps?.() ?? {}), time: inPointOf(el) - grow * rateOf(el) },
+            });
+            continue;
+          }
+        }
         followers.push({ el, s: s + delta, e: e + delta });
         continue;
       }
@@ -908,6 +1047,8 @@ function projectGiveBack(
         // read [2,8], resurrecting a second they had deliberately cut. Only the abutting split
         // pieces are legitimate, and `hasSplitSignature` is exactly that test.
         if (!hasSplitSignature(el, trackEls[k + 1], trackEls)) continue;
+        // On the LEFT edge its right-hand piece takes the footage back instead (step 1).
+        if (edge === "start") continue;
       } else if (abutsOnly) {
         // Sourceless (text/image/caption) and merely touching the seam: never shortened, nothing
         // to give back. A sourceless element that genuinely STRADDLES is healed — it has no source
@@ -973,7 +1114,11 @@ function projectGiveBack(
     // Followers first (farthest-first) so the room exists before anything grows into it, then the
     // healed straddlers, then the clip. Every intermediate state stays legal for a mid-batch read.
     updates: [
-      ...followers.map((f) => ({ elementId: f.el.getId(), updates: { s: f.s, e: f.e } })),
+      // A head-healed split piece moves its in-point in the SAME patch as its window.
+      ...followers.map((f) => ({
+        elementId: f.el.getId(),
+        updates: f.props ? { s: f.s, e: f.e, props: f.props } : { s: f.s, e: f.e },
+      })),
       ...healed.map((h) => ({ elementId: h.el.getId(), updates: { s: h.s, e: h.e } })),
       { elementId, updates: clipUpdate },
     ],
