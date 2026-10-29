@@ -173,6 +173,8 @@ export const useTimelineManager = (): TimelineManagerReturn => {
     // A refusal restores today's clamp at the neighbour's end, for the same reason as the end
     // handle: the view already widened the request, and nothing else here clamps it.
     let seamPlan: ReturnType<typeof planSeamGiveBack> = null;
+    // The ordinary START trim's new source in-point, written once the gesture is known to commit.
+    let pendingStartAt: number | null = null;
     if (dragType === DRAG_TYPE.START && updates.start < element.getStart()) {
       const neighbourEnd = mainSeamNeighbourEnd(tracks, element.getId());
       try {
@@ -207,12 +209,10 @@ export const useTimelineManager = (): TimelineManagerReturn => {
         // the source stops instead of sliding the content — the two values always describe the
         // same trim.
         clampedStart = element.getStart() + (_clampedStartAt - element.getStartAt()) / _rate;
-
-        if (element instanceof AudioElement) {
-          (element as AudioElement).setStartAt(_clampedStartAt);
-        } else {
-          (element as VideoElement).setStartAt(_clampedStartAt);
-        }
+        // Applied only once the gesture is known to commit (below the "lands where it was" check):
+        // a nudge inside the view's ms rounding would otherwise move the in-point and commit
+        // nothing, outside undo and autosave, accumulating with every release.
+        pendingStartAt = _clampedStartAt;
       }
     }
     // Clamp end handle drags. EVERY clip is clamped to its own remaining SOURCE, and overlays are
@@ -297,6 +297,13 @@ export const useTimelineManager = (): TimelineManagerReturn => {
       Math.abs(clampedEnd - element.getEnd()) <= SAME_EDGE_SECONDS
     ) {
       return;
+    }
+    if (pendingStartAt !== null) {
+      if (element instanceof AudioElement) {
+        (element as AudioElement).setStartAt(pendingStartAt);
+      } else {
+        (element as VideoElement).setStartAt(pendingStartAt);
+      }
     }
     // The trim and the caption cleanup below are ONE gesture, so they must be ONE undo entry.
     // updateElements snapshotted here and the caption cleanup then mutated tracks under a bare

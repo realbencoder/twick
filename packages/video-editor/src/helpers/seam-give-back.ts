@@ -541,6 +541,13 @@ export function endHandleSnapTargets(
  * track — the creator dragged right to reclaim and silently lost footage, in two undo entries.
  *
  * A drag that has passed the seam is unambiguously a reclaim gesture, so the seam is its floor.
+ *
+ * The same holds for a handle PINNED at a clamp with no room at all: the last clip's end when its
+ * tail is 0 (an uncut ending, or a split-and-swap) stops exactly at the clip's own end. When
+ * something on the timeline runs past the video, nothing else targets that end (the clip's own edge
+ * is excluded, the duration sits further right), so a rightward drag held at the clamp snapped
+ * BACK to a playhead or overlay edge inside the radius and committed a trim. Pinned at the clamp is
+ * not a trim, so it floors there too.
  */
 export function snapFloorForGrowth(
   snapped: number,
@@ -548,8 +555,10 @@ export function snapFloorForGrowth(
   nextStart: number | null,
   reclaimSeconds: number
 ): number {
-  if (!(reclaimSeconds > SEAM_EPS) || nextStart === null || rawEnd <= nextStart) return snapped;
-  return Math.max(snapped, nextStart);
+  if (nextStart === null) return snapped;
+  const pinned =
+    reclaimSeconds > SEAM_EPS ? rawEnd > nextStart : Math.abs(rawEnd - nextStart) <= SEAM_EPS;
+  return pinned ? Math.max(snapped, nextStart) : snapped;
 }
 
 /** What the reclaim affordance draws. See `reclaimAffordance`. */
@@ -991,7 +1000,7 @@ function projectGiveBack(
             el,
             s: s + delta - head,
             e: e + delta,
-            props: { ...(el.getProps?.() ?? {}), time: inPointOf(el) - head * rateOf(el) },
+            props: { ...(el.getProps?.() ?? {}), time: Math.max(0, inPointOf(el) - head * rateOf(el)) },
           });
         } else {
           const grow = Math.min(delta, healRoomSeconds(el, trackEls));
@@ -1019,7 +1028,7 @@ function projectGiveBack(
               el,
               s: s + delta - grow,
               e: e + delta,
-              props: { ...(el.getProps?.() ?? {}), time: inPointOf(el) - grow * rateOf(el) },
+              props: { ...(el.getProps?.() ?? {}), time: Math.max(0, inPointOf(el) - grow * rateOf(el)) },
             });
             continue;
           }

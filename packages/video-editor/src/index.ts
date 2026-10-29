@@ -150,6 +150,11 @@ export { default as SeekTrack } from "./components/track/seek-track";
 // decisions that a regex over the bundle cannot tell apart from their mutations. It takes plain
 // props and no context. See tests/unit/track-element-give-back-render.test.tsx in the app.
 export { TrackElementView } from "./components/track/track-element";
+// useTimelineManager too: what a trim or give-back COMMITS (the tail clamp, the "lands where it was"
+// no-op, the in-point write, eye contact on restored footage) is decided in its onElementDrag, and a
+// regex over the bundle cannot tell those apart from their mutations either. It needs only the
+// timeline and live-player providers. See tests/unit/timeline-manager-commit.test.tsx in the app.
+export { useTimelineManager } from "./hooks/use-timeline-manager";
 export type {
   SeamGiveBackPlan,
   SeamElementLike,
