@@ -366,6 +366,11 @@ export const useTimelineManager = (): TimelineManagerReturn => {
         }
       }
     }
+    // LAST in the batch, after the geometry, the give-back props and the caption cleanup: the
+    // footage this drag brought back gets its subtitles back in the SAME undo entry.
+    if (dragType === DRAG_TYPE.START || dragType === DRAG_TYPE.END) {
+      restoreSubtitlesOnRestored(element, sourceBefore);
+    }
     });
     if (dragType === DRAG_TYPE.START || dragType === DRAG_TYPE.END) {
       keepEyeContactOnRestored(element, sourceBefore);
@@ -373,6 +378,45 @@ export const useTimelineManager = (): TimelineManagerReturn => {
     setSelectedItem(element);
     editor.refresh();
     closeMainTrackGapsIfNeeded(element);
+  };
+
+  /**
+   * Hands the host app the SOURCE stretch(es) a main-track clip just read back, so the subtitles of
+   * that footage come back with it (a cut removed them with the footage, and nothing here can
+   * rebuild them: the stored transcript lives in the app). The window bridge
+   * `__twick_restore_subtitles` is optional, like `__twick_eyecontact`, so a host without it keeps
+   * today's behaviour.
+   *
+   * MUST be called INSIDE the drag's `batchHistory`, and the host must answer synchronously through
+   * the caption track's friend plus a render-only `refresh()`: the batch's trailing commit then
+   * records the footage AND its subtitles as ONE undo entry. Called after the batch, the subtitles
+   * would sit on the live timeline but not in the recorded entry, so a redo would bring the
+   * footage back bare.
+   *
+   * The stretches are RAW source seconds `[from, to)`, the before/after difference of the clip's
+   * `[inPointOf, outPointOf]` window; the host owns any edge slack. A throwing host never breaks
+   * the drag (rule #26: logged, not silent).
+   */
+  const restoreSubtitlesOnRestored = (element: TrackElement, before: [number, number]) => {
+    const hook = (window as any).__twick_restore_subtitles as
+      | ((restored: Array<[number, number]>) => void)
+      | null
+      | undefined;
+    if (typeof hook !== "function") return;
+    if (!(element instanceof VideoElement)) return;
+    if (!isMainVideoTrack(editor.getTrackById(element.getTrackId()))) return;
+    const after: [number, number] = [inPointOf(element), outPointOf(element)];
+    const restored: Array<[number, number]> = [];
+    // The in-point moved back (left-edge give-back): its head came back.
+    if (after[0] < before[0] - 1e-6) restored.push([after[0], before[0]]);
+    // The out-point moved on (right-edge give-back): its tail came back.
+    if (after[1] > before[1] + 1e-6) restored.push([before[1], after[1]]);
+    if (restored.length === 0) return;
+    try {
+      hook(restored);
+    } catch (err) {
+      console.error("[give-back] subtitle restore hook failed:", err);
+    }
   };
 
   /**
