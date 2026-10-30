@@ -10,7 +10,11 @@ import {
 import { useLivePlayerContext } from "@twick/live-player";
 import { CAPTION_PROPS } from "../helpers/constant";
 import { mergeEditingText, shouldCommitCaptionEdit } from "../helpers/caption-sync";
-import { planAddSubtitle, type AddSubtitleCaption } from "../helpers/add-subtitle-plan";
+import {
+  NEW_SUBTITLE_TEXT,
+  planAddSubtitle,
+  type AddSubtitleCaption,
+} from "../helpers/add-subtitle-plan";
 import type { CaptionPanelEntry } from "../types";
 
 /**
@@ -203,8 +207,9 @@ export const useCaptionsPanel = () => {
   }, [editor, track]);
 
   /**
-   * Add subtitle at `t`: a new "New subtitle" in a gap, or a split of the subtitle under `t` at
-   * its nearest word break with the right half selected. One undo entry per press either way.
+   * Add subtitle at `t`: a new "New subtitle" in a gap (or right after the untouched placeholder
+   * under `t`, a repeat press), or a split of the subtitle under `t` at its nearest word break
+   * with the right half selected. One undo entry per press either way.
    * Resolves once the edit has landed; never rejects (a failure is logged and announced).
    */
   const addCaptionAt = useCallback(
@@ -228,7 +233,7 @@ export const useCaptionsPanel = () => {
       }
 
       if (plan.kind === "add") {
-        const element = new CaptionElement("New subtitle", plan.start, plan.end);
+        const element = new CaptionElement(NEW_SUBTITLE_TEXT, plan.start, plan.end);
         // ONE undo entry even when this press also creates the Subtitles track: addTrack and
         // addElementToTrack each commit their own snapshot, and addElementToTrack's commit lands
         // after an await, outside any batch. So the element goes on through the track's friend

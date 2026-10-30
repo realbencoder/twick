@@ -16,6 +16,12 @@ import { MIN_SPLIT_PIECE_SECONDS } from "@twick/timeline";
  *   ones, `s + dur * i / n`: never the raw playhead, which a second press, or a press after a card
  *   click (it seeks to the subtitle's start), leaves on the subtitle's first frame, where the split
  *   would ship a one-frame sliver.
+ * - On an UNTOUCHED "New subtitle" placeholder (founder call, 2026-10-30): a repeat press leaves
+ *   the playhead on the placeholder it just added, so instead of splitting it the next subtitle
+ *   goes right after it, by the same gap rules, or the press refuses no-room. A third press at
+ *   the same playhead is still on the FIRST placeholder, whose end now meets the second, so it
+ *   refuses: no chaining. Untouched = trimmed text exactly NEW_SUBTITLE_TEXT and no word times
+ *   that line up with its words; an edited placeholder, or one with word times, splits as above.
  *
  * Pure, so the app's unit suite can execute it against the shipped dist (the fork has no runner).
  */
@@ -32,6 +38,9 @@ export type AddSubtitleCaption = {
   /** Word starts, absolute timeline time: ms, or seconds on legacy projects. */
   wordsMs?: number[] | null;
 };
+
+/** The placeholder text a new subtitle gets. The hook adds it; the planner recognises it. */
+export const NEW_SUBTITLE_TEXT = "New subtitle";
 
 /** How long a subtitle added in a gap is, at most. */
 export const ADD_SUBTITLE_SECONDS = 1;
@@ -100,18 +109,44 @@ export function planAddSubtitle(
   for (const c of captions) {
     if (c.s <= playhead && playhead < c.e && (!on || c.s > on.s)) on = c;
   }
-  if (on) return planSplit(on, playhead);
+  if (on) {
+    // A repeat press: the next subtitle goes right after an untouched placeholder (no split).
+    if (isUntouchedPlaceholder(on)) return planGapAt(captions, on.e, videoEnd);
+    return planSplit(on, playhead);
+  }
+  return planGapAt(captions, playhead, videoEnd);
+}
 
-  if (playhead >= videoEnd) return { kind: "refuse", reason: "no-room" };
+/** The caption the hook just added, as it added it: text exactly NEW_SUBTITLE_TEXT (trimmed), and
+ *  no word times that line up with its words (the hook adds it with none). */
+function isUntouchedPlaceholder(c: AddSubtitleCaption): boolean {
+  if ((c.text ?? "").trim() !== NEW_SUBTITLE_TEXT) return false;
+  const tokens = (c.text ?? "").split(" ");
+  const aligned =
+    Array.isArray(c.wordsMs) && c.wordsMs.length > 0 && c.wordsMs.length === tokens.length;
+  return !aligned;
+}
+
+/** A new subtitle starting at `start`: up to 1 s, stopping at the next subtitle and the video's
+ *  end; no-room when a subtitle already covers `start` or under 0.2 s is left. */
+function planGapAt(
+  captions: AddSubtitleCaption[],
+  start: number,
+  videoEnd: number
+): AddSubtitlePlan {
+  if (start >= videoEnd) return { kind: "refuse", reason: "no-room" };
   let nextStart = Infinity;
   for (const c of captions) {
-    if (c.s > playhead && c.s < nextStart) nextStart = c.s;
+    // Covered (a subtitle starting exactly here, or one overlapping it): no room. The playhead
+    // path never gets here when on a caption, but the after-a-placeholder path can.
+    if (c.s <= start && start < c.e) return { kind: "refuse", reason: "no-room" };
+    if (c.s > start && c.s < nextStart) nextStart = c.s;
   }
-  const end = Math.min(playhead + ADD_SUBTITLE_SECONDS, nextStart, videoEnd);
-  if (end - playhead < MIN_ADD_SUBTITLE_SECONDS - ROOM_EPSILON_SECONDS) {
+  const end = Math.min(start + ADD_SUBTITLE_SECONDS, nextStart, videoEnd);
+  if (end - start < MIN_ADD_SUBTITLE_SECONDS - ROOM_EPSILON_SECONDS) {
     return { kind: "refuse", reason: "no-room" };
   }
-  return { kind: "add", start: playhead, end };
+  return { kind: "add", start, end };
 }
 
 function planSplit(c: AddSubtitleCaption, playhead: number): AddSubtitlePlan {
