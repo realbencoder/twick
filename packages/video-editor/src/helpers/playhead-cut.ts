@@ -1,4 +1,4 @@
-import { canSplitElement } from "@twick/timeline";
+import { canSplitElement, CaptionElement, TextElement } from "@twick/timeline";
 import type { Track, TrackElement } from "@twick/timeline";
 import { isMainVideoTrack } from "./editor.utils";
 
@@ -8,7 +8,13 @@ import { isMainVideoTrack } from "./editor.utils";
  * The smallest piece allowed is whatever `canSplitElement` says, and nothing else.
  */
 export type PlayheadCutAction = "split" | "delete-before" | "delete-after";
-export type PlayheadCutRefusal = "no-clip" | "near-edge" | "main-locked" | "selected-locked";
+export type PlayheadCutRefusal =
+  | "no-clip"
+  | "near-edge"
+  | "main-locked"
+  | "selected-locked"
+  | "one-word"
+  | "split-failed";
 export type SplitTarget =
   | { kind: "split"; element: TrackElement; selectionWasTarget: boolean }
   | { kind: "refuse"; reason: PlayheadCutRefusal };
@@ -24,6 +30,16 @@ const isTrackLocked = (track: Track | undefined | null): boolean =>
 
 const isElement = (item: Track | TrackElement | null | undefined): item is TrackElement =>
   !!item && typeof (item as TrackElement).getStart === "function";
+
+/**
+ * A subtitle or text overlay the engine will not split: ElementSplitter's visitTextElement and
+ * visitCaptionElement refuse when `(getText() || "").split(" ")` has fewer than 2 entries (neither
+ * half may be empty). Mirrored here verbatim (the engine keeps it inline, with no shared export) so
+ * Split refuses with a reason instead of the engine failing silently.
+ */
+const isOneWordText = (element: TrackElement): boolean =>
+  (element instanceof CaptionElement || element instanceof TextElement) &&
+  (element.getText() || "").split(" ").length < 2;
 
 type MainClip =
   | { kind: "clip"; element: TrackElement }
@@ -65,6 +81,9 @@ export function resolveSplitTarget(
   if (selected && selected.element.getStart() < t && t < selected.element.getEnd()) {
     if (isTrackLocked(selected.track)) return { kind: "refuse", reason: "selected-locked" };
     if (!canSplitElement(selected.element, t)) return { kind: "refuse", reason: "near-edge" };
+    // Selected targets only: the main-clip target is a video, and the engine's caption cascade
+    // already leaves a one-word subtitle over the cut whole.
+    if (isOneWordText(selected.element)) return { kind: "refuse", reason: "one-word" };
     return { kind: "split", element: selected.element, selectionWasTarget: true };
   }
   const main = mainClipAt(tracks, t);
@@ -87,18 +106,26 @@ const MESSAGES: Record<PlayheadCutAction, Record<PlayheadCutRefusal, string>> = 
     "near-edge": "Too close to the edge of the clip to split",
     "main-locked": "Unlock the video track to cut it",
     "selected-locked": "Unlock this clip's track to split it",
+    "one-word": "A single word can't be split",
+    "split-failed": "Couldn't split here. Try moving the playhead a little.",
   },
   "delete-before": {
     "no-clip": "Move the playhead over your video to cut it",
     "near-edge": "Move the playhead into the clip to cut before it",
     "main-locked": "Unlock the video track to cut it",
     "selected-locked": "Unlock the video track to cut it",
+    // Unreachable: delete before/after cuts the main video clip, never a subtitle or text.
+    "one-word": "A single word can't be split",
+    "split-failed": "Couldn't cut here. Try moving the playhead a little.",
   },
   "delete-after": {
     "no-clip": "Move the playhead over your video to cut it",
     "near-edge": "Move the playhead into the clip to cut after it",
     "main-locked": "Unlock the video track to cut it",
     "selected-locked": "Unlock the video track to cut it",
+    // Unreachable: delete before/after cuts the main video clip, never a subtitle or text.
+    "one-word": "A single word can't be split",
+    "split-failed": "Couldn't cut here. Try moving the playhead a little.",
   },
 };
 

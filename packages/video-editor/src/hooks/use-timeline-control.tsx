@@ -11,6 +11,7 @@ import {
   playheadCutMessage,
   PLAYHEAD_CUT_REFUSED_EVENT,
 } from "../helpers/playhead-cut";
+import type { PlayheadCutRefusal } from "../helpers/playhead-cut";
 
 /** Force-pause all media after a split, so a cut while playing does not leak audio. */
 const pauseAllMediaSoon = () => {
@@ -167,7 +168,8 @@ const useTimelineControl = () => {
    * select are never cut). Subtitles over a main clip split with it, in the same single undo entry.
    *
    * A refusal changes nothing and says why: it fires PLAYHEAD_CUT_REFUSED_EVENT on window with
-   * `{ action: "split", reason, message }` for the host to show, and returns false.
+   * `{ action: "split", reason, message }` for the host to show, and returns false. That includes
+   * an engine split that fails after the rules allowed it (`split-failed`).
    *
    * After a split of the SELECTED clip, the right piece is selected (the playhead sits at its start,
    * so the next S further on acts on it). After a split of the main clip with something else or
@@ -175,27 +177,26 @@ const useTimelineControl = () => {
    * selecting one would switch the host's side panel on every press.
    */
   const splitAtPlayhead = async (t: number): Promise<boolean> => {
-    const tracks = editor.getTimelineData()?.tracks ?? [];
-    const target = resolveSplitTarget(selectedItem, tracks, t);
-    if (target.kind === "refuse") {
+    const refuse = (reason: PlayheadCutRefusal) => {
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent(PLAYHEAD_CUT_REFUSED_EVENT, {
-            detail: {
-              action: "split",
-              reason: target.reason,
-              message: playheadCutMessage("split", target.reason),
-            },
+            detail: { action: "split", reason, message: playheadCutMessage("split", reason) },
           })
         );
       }
       return false;
-    }
+    };
+    const tracks = editor.getTimelineData()?.tracks ?? [];
+    const target = resolveSplitTarget(selectedItem, tracks, t);
+    if (target.kind === "refuse") return refuse(target.reason);
     const result = await editor.splitElementWithCaptionCascade(target.element, t);
     pauseAllMediaSoon();
     if (!result?.success) {
+      // The rules said yes and the engine said no (a case resolveSplitTarget does not foresee):
+      // still a refusal the creator hears about, never a silent no-op.
       console.error("[Timeline] split at the playhead failed", { id: target.element.getId(), t });
-      return false;
+      return refuse("split-failed");
     }
     if (target.selectionWasTarget && result.secondElement) {
       setSelectedItem(result.secondElement);

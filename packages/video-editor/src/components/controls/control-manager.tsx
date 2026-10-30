@@ -52,9 +52,10 @@ const ControlManager = ({
     onSplit: splitNow,
   });
 
-  // The Scissors button's state, from the SAME rule the press uses, so the button can never
-  // advertise a split the press would refuse (or grey out one it would make). Disabled, its title
-  // is the refusal message the key press would toast.
+  // The Scissors button's state, from the SAME rule the press uses (resolveSplitTarget), so the
+  // button and the press agree on the target and on every refusal the rule can foresee. Disabled,
+  // its title is the refusal message the key press would toast. A split the engine still fails
+  // after the rule allowed it is announced by the press itself (split-failed), never silent.
   const splitTarget = resolveSplitTarget(selectedItem, editor.getTimelineData()?.tracks ?? [], currentTime);
   const playheadCut: PlayerControlsProps["playheadCut"] = {
     split:
