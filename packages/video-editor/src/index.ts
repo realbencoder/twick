@@ -129,6 +129,21 @@ export {
   carryCaptionRecords,
 } from "./helpers/caption-records";
 export type { CaptionRecordKey } from "./helpers/caption-records";
+// Cutting at the playhead (Split, delete before/after). Exported so the app suite EXECUTES the
+// shipped decision rules instead of string-matching the bundle; see
+// tests/unit/playhead-cut-dist.test.ts in the app. Do not remove without replacing that test.
+export {
+  resolveSplitTarget,
+  resolveDeleteRange,
+  playheadCutMessage,
+  PLAYHEAD_CUT_REFUSED_EVENT,
+} from "./helpers/playhead-cut";
+export type {
+  PlayheadCutAction,
+  PlayheadCutRefusal,
+  SplitTarget,
+  DeleteRange,
+} from "./helpers/playhead-cut";
 // Ruler tick decisions. Exported for the same reason as the strip-window helpers above: so the app
 // suite can EXECUTE the shipped arithmetic. Grep-only marker tests let nine silent reverts through
 // on an earlier change in this package.
