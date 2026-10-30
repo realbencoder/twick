@@ -4,6 +4,8 @@ import "../../styles/player-controls.css";
 import {
   Trash2,
   Scissors,
+  ArrowLeftToLine,
+  ArrowRightToLine,
   Play,
   Pause,
   Loader2,
@@ -75,11 +77,21 @@ export interface PlayerControlsProps {
    */
   onSplit?: (item: TrackElement, splitTime: number) => void;
   /**
-   * Split at the playhead, decided by the host (ControlManager passes it, from resolveSplitTarget):
-   * the Scissors button's enabled state and title, and what a click runs. When present it replaces
-   * the legacy selected-clip gate and `onSplit`.
+   * Cutting at the playhead, decided by the host (ControlManager passes it, from resolveSplitTarget
+   * and resolveDeleteRange): each button's enabled state and title, and what a click runs.
+   * - `split`: the Scissors button. When present it replaces the legacy selected-clip gate and
+   *   `onSplit`.
+   * - `before` / `after`: the delete before / after the playhead buttons, rendered right after the
+   *   Scissors, and only when `playheadCut` is passed.
    */
-  playheadCut?: { split: CutButtonState; onSplit: () => void };
+  playheadCut?: {
+    split: CutButtonState;
+    before: CutButtonState;
+    after: CutButtonState;
+    onSplit: () => void;
+    onDeleteBefore: () => void;
+    onDeleteAfter: () => void;
+  };
   /** Current zoom level for timeline */
   zoomLevel?: number;
   /** Function to set zoom level */
@@ -235,6 +247,31 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
         >
           <Scissors className="icon-md" />
         </button>
+
+        {playheadCut && (
+          <>
+            <button
+              onClick={() => playheadCut.before.enabled && playheadCut.onDeleteBefore()}
+              disabled={!playheadCut.before.enabled}
+              title={playheadCut.before.title}
+              className={`control-btn delete-before-btn ${
+                !playheadCut.before.enabled ? "btn-disabled" : ""
+              }`}
+            >
+              <ArrowLeftToLine className="icon-md" />
+            </button>
+            <button
+              onClick={() => playheadCut.after.enabled && playheadCut.onDeleteAfter()}
+              disabled={!playheadCut.after.enabled}
+              title={playheadCut.after.title}
+              className={`control-btn delete-after-btn ${
+                !playheadCut.after.enabled ? "btn-disabled" : ""
+              }`}
+            >
+              <ArrowRightToLine className="icon-md" />
+            </button>
+          </>
+        )}
 
         <UndoRedoControls
           canUndo={canUndo}

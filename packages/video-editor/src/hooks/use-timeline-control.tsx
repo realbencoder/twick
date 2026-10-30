@@ -8,10 +8,11 @@ import { isMainVideoTrack } from "../helpers/editor.utils";
 import { recordCaptionRemoval } from "../helpers/caption-records";
 import {
   resolveSplitTarget,
+  resolveDeleteRange,
   playheadCutMessage,
   PLAYHEAD_CUT_REFUSED_EVENT,
 } from "../helpers/playhead-cut";
-import type { PlayheadCutRefusal } from "../helpers/playhead-cut";
+import type { PlayheadCutAction, PlayheadCutRefusal } from "../helpers/playhead-cut";
 
 /** Force-pause all media after a split, so a cut while playing does not leak audio. */
 const pauseAllMediaSoon = () => {
@@ -21,6 +22,22 @@ const pauseAllMediaSoon = () => {
       try { (el as HTMLMediaElement).pause(); } catch {}
     });
   }, 100);
+};
+
+/**
+ * A cut at the playhead that did nothing says why: PLAYHEAD_CUT_REFUSED_EVENT on window with
+ * `{ action, reason, message }` for the host to show (a disabled button carries the same message as
+ * its title). Returns false, the press's result.
+ */
+const refuse = (action: PlayheadCutAction, reason: PlayheadCutRefusal): false => {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent(PLAYHEAD_CUT_REFUSED_EVENT, {
+        detail: { action, reason, message: playheadCutMessage(action, reason) },
+      })
+    );
+  }
+  return false;
 };
 
 /**
@@ -177,29 +194,62 @@ const useTimelineControl = () => {
    * selecting one would switch the host's side panel on every press.
    */
   const splitAtPlayhead = async (t: number): Promise<boolean> => {
-    const refuse = (reason: PlayheadCutRefusal) => {
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(
-          new CustomEvent(PLAYHEAD_CUT_REFUSED_EVENT, {
-            detail: { action: "split", reason, message: playheadCutMessage("split", reason) },
-          })
-        );
-      }
-      return false;
-    };
     const tracks = editor.getTimelineData()?.tracks ?? [];
     const target = resolveSplitTarget(selectedItem, tracks, t);
-    if (target.kind === "refuse") return refuse(target.reason);
+    if (target.kind === "refuse") return refuse("split", target.reason);
     const result = await editor.splitElementWithCaptionCascade(target.element, t);
     pauseAllMediaSoon();
     if (!result?.success) {
       // The rules said yes and the engine said no (a case resolveSplitTarget does not foresee):
       // still a refusal the creator hears about, never a silent no-op.
       console.error("[Timeline] split at the playhead failed", { id: target.element.getId(), t });
-      return refuse("split-failed");
+      return refuse("split", "split-failed");
     }
     if (target.selectionWasTarget && result.secondElement) {
       setSelectedItem(result.secondElement);
+    }
+    return true;
+  };
+
+  /**
+   * Delete before the playhead (Q: from the start of the main video clip under the playhead to the
+   * playhead) or after it (W: from the playhead to that clip's end). resolveDeleteRange decides the
+   * range from the MAIN clip only; the selection plays no part and is never changed.
+   *
+   * The cut is ONE `editor.rippleDeleteRanges` call, so one undo entry: every track loses the same
+   * stretch and everything after it slides left (B-roll and music crossing it are trimmed, subtitle
+   * words inside it are dropped), locked B-roll and subtitle tracks included, exactly as transcript
+   * Delete cuts. Only a locked MAIN track refuses.
+   *
+   * After a delete before, the playhead moves to the new join (the clip's old start, where the kept
+   * footage now begins) through the host's player controller (`__webcodecs_controller.seek`, which
+   * does not drop a repeat seek to the same time), or `fallbackSeek` when no controller exists.
+   * After a delete after, the playhead is already on the join and does not move.
+   *
+   * A refusal changes nothing and says why (PLAYHEAD_CUT_REFUSED_EVENT with action "delete-before"
+   * or "delete-after"), and returns false. So does a cut the engine throws on (`split-failed`),
+   * which is also logged: rippleDeleteRanges cuts a clone and commits once at its end, so a throw
+   * before that commit leaves the timeline as it was.
+   */
+  const deleteAtPlayhead = async (
+    side: "before" | "after",
+    t: number,
+    fallbackSeek?: (time: number) => void
+  ): Promise<boolean> => {
+    const action: PlayheadCutAction = side === "before" ? "delete-before" : "delete-after";
+    const range = resolveDeleteRange(editor.getTimelineData()?.tracks ?? [], t, side);
+    if (range.kind === "refuse") return refuse(action, range.reason);
+    try {
+      await editor.rippleDeleteRanges([[range.from, range.to]]);
+    } catch (error) {
+      console.error("[Timeline] delete at the playhead failed", { side, t, error });
+      return refuse(action, "split-failed");
+    }
+    if (range.seekTo !== null) {
+      const controller = (globalThis as { __webcodecs_controller?: { seek?: (time: number) => void } })
+        .__webcodecs_controller;
+      if (controller && typeof controller.seek === "function") controller.seek(range.seekTo);
+      else fallbackSeek?.(range.seekTo);
     }
     return true;
   };
@@ -248,6 +298,7 @@ const useTimelineControl = () => {
   return {
     splitElement,
     splitAtPlayhead,
+    deleteAtPlayhead,
     deleteItem,
     handleUndo,
     handleRedo,
