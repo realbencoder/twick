@@ -34,7 +34,7 @@
 import "./styles/video-editor.css";
 
 import VideoEditor, { VideoEditorProps, VideoEditorConfig, TimelineTickConfig, TimelineZoomConfig } from "./components/video-editor";
-import PlayerControls, { PlayerControlsProps } from "./components/controls/player-controls";
+import PlayerControls, { PlayerControlsProps, CutButtonState } from "./components/controls/player-controls";
 import TimelineManager from "./components/timeline/timeline-manager";
 import { usePlayerControl } from "./hooks/use-player-control";
 import { useEditorManager } from "./hooks/use-editor-manager";
@@ -63,7 +63,7 @@ export type {
   AssetProviderConfig,
   AssetPaginated,
 };
-export type { PlayerControlsProps, VideoEditorProps, VideoEditorConfig, TimelineTickConfig, TimelineZoomConfig, CanvasConfig };
+export type { PlayerControlsProps, CutButtonState, VideoEditorProps, VideoEditorConfig, TimelineTickConfig, TimelineZoomConfig, CanvasConfig };
 
 export { throttle, debounce } from "./helpers/function.utils";
 export { clearFilmstripCache } from "./helpers/filmstrip-render";
@@ -183,6 +183,13 @@ export { TrackElementView } from "./components/track/track-element";
 // regex over the bundle cannot tell those apart from their mutations either. It needs only the
 // timeline and live-player providers. See tests/unit/timeline-manager-commit.test.tsx in the app.
 export { useTimelineManager } from "./hooks/use-timeline-manager";
+// ControlManager (the transport row and its keys) is exported FOR TESTING, not for host use; mount
+// it via VideoEditor. Which clip S, Cmd/Ctrl+B and the Scissors button cut, what they select after,
+// the refusal event and the button's title are decided where it hands the playhead time and the
+// selection to resolveSplitTarget, and a regex over the bundle cannot tell those call sites apart
+// from their mutations. It needs only the timeline and live-player providers. See
+// tests/unit/playhead-cut-controls-dist.test.tsx in the app.
+export { default as ControlManager } from "./components/controls/control-manager";
 // usePlayerManager too, FOR TESTING: the canvas's Delete and caption drag write the creator's
 // subtitle records (helpers/caption-records.ts) here. See
 // tests/unit/subtitle-creator-records-dist.test.tsx in the app.

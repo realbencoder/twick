@@ -1,11 +1,12 @@
 import { useLivePlayerContext, useLivePlayerTime } from "@twick/live-player";
-import PlayerControls from "./player-controls";
-import { TrackElement, canSplitElement, useTimelineContext } from "@twick/timeline";
+import PlayerControls, { PlayerControlsProps } from "./player-controls";
+import { useTimelineContext } from "@twick/timeline";
 import { usePlayerControl } from "../../hooks/use-player-control";
 import useTimelineControl from "../../hooks/use-timeline-control";
 import { useCanvasKeyboard } from "../../hooks/use-canvas-keyboard";
 import { TimelineZoomConfig } from "../video-editor";
 import { DEFAULT_FPS } from "../../helpers/constants";
+import { resolveSplitTarget, playheadCutMessage } from "../../helpers/playhead-cut";
 
 const ControlManager = ({
   trackZoom,
@@ -21,10 +22,11 @@ const ControlManager = ({
   /** When true, play goes directly Paused→Playing (no Refresh cycle). For external player. */
   skipRefreshCycle?: boolean;
 }) => {
-  const { playerState, setSeekTime, setCurrentTime } = useLivePlayerContext();
+  const { playerState, setSeekTime, setCurrentTime, getCurrentTime } = useLivePlayerContext();
   const currentTime = useLivePlayerTime();
   const { togglePlayback } = usePlayerControl(skipRefreshCycle);
   const {
+    editor,
     canRedo,
     canUndo,
     totalDuration,
@@ -33,22 +35,34 @@ const ControlManager = ({
     followPlayheadEnabled,
     setFollowPlayheadEnabled,
   } = useTimelineContext();
-  const { deleteItem, splitElement, handleUndo, handleRedo, deleteBlockedReason } =
+  const { deleteItem, splitAtPlayhead, handleUndo, handleRedo, deleteBlockedReason } =
     useTimelineControl();
+
+  // Split at the playhead: the key and the button run the same splitAtPlayhead, which decides the
+  // target from the live tracks at the moment of the press (a refusal fires the toast event). The
+  // press reads the clock through getCurrentTime(), never staler than the rendered time.
+  const splitNow = () => {
+    void splitAtPlayhead(getCurrentTime());
+  };
 
   useCanvasKeyboard({
     onDelete: () => deleteItem(),
     onUndo: () => handleUndo(),
     onRedo: () => handleRedo(),
-    onSplit: () => {
-      // Split the selected clip at the playhead (mirrors the Split button). Guard with the same
-      // validator the button uses — the keyboard shortcut must not silently no-op when the playhead
-      // is outside the selected clip (Cmd/Ctrl+B or S can fire regardless of the button's disabled state).
-      if (selectedItem instanceof TrackElement && canSplitElement(selectedItem, currentTime)) {
-        splitElement(selectedItem, currentTime);
-      }
-    },
+    onSplit: splitNow,
   });
+
+  // The Scissors button's state, from the SAME rule the press uses, so the button can never
+  // advertise a split the press would refuse (or grey out one it would make). Disabled, its title
+  // is the refusal message the key press would toast.
+  const splitTarget = resolveSplitTarget(selectedItem, editor.getTimelineData()?.tracks ?? [], currentTime);
+  const playheadCut: PlayerControlsProps["playheadCut"] = {
+    split:
+      splitTarget.kind === "split"
+        ? { enabled: true, title: "Split at the playhead (S)" }
+        : { enabled: false, title: playheadCutMessage("split", splitTarget.reason) },
+    onSplit: splitNow,
+  };
 
   const handleSeek = (time: number) => {
     const clamped = Math.max(0, Math.min(totalDuration, time));
@@ -69,7 +83,7 @@ const ControlManager = ({
         canRedo={canRedo}
         onDelete={() => deleteItem()}
         deleteBlockedReason={deleteBlockedReason}
-        onSplit={splitElement}
+        playheadCut={playheadCut}
         onUndo={handleUndo}
         onRedo={handleRedo}
         zoomLevel={trackZoom}

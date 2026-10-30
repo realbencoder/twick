@@ -6,6 +6,21 @@ import {
 } from "@twick/timeline";
 import { isMainVideoTrack } from "../helpers/editor.utils";
 import { recordCaptionRemoval } from "../helpers/caption-records";
+import {
+  resolveSplitTarget,
+  playheadCutMessage,
+  PLAYHEAD_CUT_REFUSED_EVENT,
+} from "../helpers/playhead-cut";
+
+/** Force-pause all media after a split, so a cut while playing does not leak audio. */
+const pauseAllMediaSoon = () => {
+  if (typeof document === "undefined") return;
+  setTimeout(() => {
+    document.querySelectorAll("video, audio").forEach((el) => {
+      try { (el as HTMLMediaElement).pause(); } catch {}
+    });
+  }, 100);
+};
 
 /**
  * Custom hook to manage timeline control operations.
@@ -26,7 +41,7 @@ import { recordCaptionRemoval } from "../helpers/caption-records";
  * ```
  */
 const useTimelineControl = () => {
-  const { editor, setSelectedItem, selectedIds } = useTimelineContext();
+  const { editor, setSelectedItem, selectedIds, selectedItem } = useTimelineContext();
 
   /**
    * Deletes selected item(s) from the timeline.
@@ -142,14 +157,50 @@ const useTimelineControl = () => {
     if (result?.success && result?.firstElement) {
       setSelectedItem(result.firstElement);
     }
-    // Force-pause all media elements after split to prevent audio leak
-    if (typeof document !== 'undefined') {
-      setTimeout(() => {
-        document.querySelectorAll('video, audio').forEach((el) => {
-          try { (el as HTMLMediaElement).pause(); } catch {}
-        });
-      }, 100);
+    pauseAllMediaSoon();
+  };
+
+  /**
+   * Split at the playhead without clicking a clip first (S, Cmd/Ctrl+B, the Scissors button).
+   * The target is the selected clip when the playhead is inside it, otherwise the MAIN video clip
+   * under the playhead (resolveSplitTarget decides; B-roll, music and overlays the creator did not
+   * select are never cut). Subtitles over a main clip split with it, in the same single undo entry.
+   *
+   * A refusal changes nothing and says why: it fires PLAYHEAD_CUT_REFUSED_EVENT on window with
+   * `{ action: "split", reason, message }` for the host to show, and returns false.
+   *
+   * After a split of the SELECTED clip, the right piece is selected (the playhead sits at its start,
+   * so the next S further on acts on it). After a split of the main clip with something else or
+   * nothing selected, the selection is left exactly as it was: both pieces are new ids, and
+   * selecting one would switch the host's side panel on every press.
+   */
+  const splitAtPlayhead = async (t: number): Promise<boolean> => {
+    const tracks = editor.getTimelineData()?.tracks ?? [];
+    const target = resolveSplitTarget(selectedItem, tracks, t);
+    if (target.kind === "refuse") {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent(PLAYHEAD_CUT_REFUSED_EVENT, {
+            detail: {
+              action: "split",
+              reason: target.reason,
+              message: playheadCutMessage("split", target.reason),
+            },
+          })
+        );
+      }
+      return false;
     }
+    const result = await editor.splitElementWithCaptionCascade(target.element, t);
+    pauseAllMediaSoon();
+    if (!result?.success) {
+      console.error("[Timeline] split at the playhead failed", { id: target.element.getId(), t });
+      return false;
+    }
+    if (target.selectionWasTarget && result.secondElement) {
+      setSelectedItem(result.secondElement);
+    }
+    return true;
   };
 
   /**
@@ -195,6 +246,7 @@ const useTimelineControl = () => {
 
   return {
     splitElement,
+    splitAtPlayhead,
     deleteItem,
     handleUndo,
     handleRedo,

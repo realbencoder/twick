@@ -18,6 +18,9 @@ import { TrackElement, Track, formatTimeTenths, canSplitElement } from "@twick/t
 import { TimelineZoomConfig } from "../video-editor";
 import { DEFAULT_TIMELINE_ZOOM_CONFIG } from "../../helpers/constants";
 
+/** A cut button's state as the host decided it: enabled, and the tooltip (the refusal when not). */
+export type CutButtonState = { enabled: boolean; title: string };
+
 /**
  * Props for the PlayerControls component.
  * Defines the configuration options and callback functions for player controls.
@@ -66,8 +69,17 @@ export interface PlayerControlsProps {
   onRedo?: () => void;
   /** Optional callback for delete operation (deletes all selected) */
   onDelete?: () => void;
-  /** Optional callback for split operation */
+  /**
+   * Optional callback for split operation (legacy: splits the SELECTED clip only, and the button
+   * stays disabled until a clip is selected under the playhead). Ignored when `playheadCut` is set.
+   */
   onSplit?: (item: TrackElement, splitTime: number) => void;
+  /**
+   * Split at the playhead, decided by the host (ControlManager passes it, from resolveSplitTarget):
+   * the Scissors button's enabled state and title, and what a click runs. When present it replaces
+   * the legacy selected-clip gate and `onSplit`.
+   */
+  playheadCut?: { split: CutButtonState; onSplit: () => void };
   /** Current zoom level for timeline */
   zoomLevel?: number;
   /** Function to set zoom level */
@@ -103,6 +115,7 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
   onUndo,
   onRedo,
   onSplit,
+  playheadCut,
   onDelete,
   zoomLevel = 1,
   setZoomLevel,
@@ -142,6 +155,7 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
     }
   }, [canDelete, onDelete]);
 
+  // Legacy split (hosts that pass `onSplit`, not `playheadCut`).
   // Split only works when the playhead is strictly INSIDE the selected clip (canSplitElement — the
   // same validator splitElement uses). Outside, split is a silent no-op; gate the button on it so
   // the affordance tells the truth (disabled + "move playhead over the clip" tooltip).
@@ -159,6 +173,21 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
       onSplit(selectedItem as TrackElement, currentTime);
     }
   }, [canSplit, selectedItem, onSplit, currentTime]);
+  // The Scissors button: the host's playhead decision when given, else the legacy selected-clip gate.
+  const splitEnabled = playheadCut ? playheadCut.split.enabled : canSplit;
+  const splitTitle = playheadCut
+    ? playheadCut.split.title
+    : !(selectedItem instanceof TrackElement)
+    ? "Select a clip to split"
+    : canSplit
+    ? "Split at playhead"
+    : playheadInsideClip
+    ? "Too close to the edge of the clip to split"
+    : "Move the playhead over the selected clip to split it";
+  const handleSplitClick = () => {
+    if (!playheadCut) return handleSplit();
+    if (playheadCut.split.enabled) playheadCut.onSplit();
+  };
 
   const handleZoomIn = useCallback(() => {
     if (setZoomLevel && zoomLevel < MAX_ZOOM) {
@@ -199,18 +228,10 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
         </button>
 
         <button
-          onClick={handleSplit}
-          disabled={!canSplit}
-          title={
-            !(selectedItem instanceof TrackElement)
-              ? "Select a clip to split"
-              : canSplit
-              ? "Split at playhead"
-              : playheadInsideClip
-              ? "Too close to the edge of the clip to split"
-              : "Move the playhead over the selected clip to split it"
-          }
-          className={`control-btn split-btn ${!canSplit ? "btn-disabled" : ""}`}
+          onClick={handleSplitClick}
+          disabled={!splitEnabled}
+          title={splitTitle}
+          className={`control-btn split-btn ${!splitEnabled ? "btn-disabled" : ""}`}
         >
           <Scissors className="icon-md" />
         </button>

@@ -39,16 +39,33 @@ function mainClipAt(tracks: Track[], t: number): MainClip {
   return { kind: "clip", element: clip };
 }
 
+/**
+ * The selected element as the timeline holds it NOW, with its track: the element under the same id
+ * on the track that owns it, so a stale copy of the selection resolves to the live instance. Null
+ * when no track holds it (removed since it was selected), which counts as nothing selected, so a
+ * press never "splits" a clip that is not on the timeline.
+ */
+function liveSelection(
+  selectedItem: Track | TrackElement | null,
+  tracks: Track[],
+): { element: TrackElement; track: Track } | null {
+  if (!isElement(selectedItem)) return null;
+  const id = selectedItem.getId();
+  const track = tracks.find((tr) => tr.getElementById(id) !== undefined);
+  const element = track?.getElementById(id);
+  return track && element ? { element: element as TrackElement, track } : null;
+}
+
 export function resolveSplitTarget(
   selectedItem: Track | TrackElement | null,
   tracks: Track[],
   t: number,
 ): SplitTarget {
-  if (isElement(selectedItem) && selectedItem.getStart() < t && t < selectedItem.getEnd()) {
-    const owner = tracks.find((tr) => tr.getElements().some((el) => el === selectedItem || el.getId() === selectedItem.getId()));
-    if (isTrackLocked(owner)) return { kind: "refuse", reason: "selected-locked" };
-    if (!canSplitElement(selectedItem, t)) return { kind: "refuse", reason: "near-edge" };
-    return { kind: "split", element: selectedItem, selectionWasTarget: true };
+  const selected = liveSelection(selectedItem, tracks);
+  if (selected && selected.element.getStart() < t && t < selected.element.getEnd()) {
+    if (isTrackLocked(selected.track)) return { kind: "refuse", reason: "selected-locked" };
+    if (!canSplitElement(selected.element, t)) return { kind: "refuse", reason: "near-edge" };
+    return { kind: "split", element: selected.element, selectionWasTarget: true };
   }
   const main = mainClipAt(tracks, t);
   if (main.kind === "refuse") return main;
