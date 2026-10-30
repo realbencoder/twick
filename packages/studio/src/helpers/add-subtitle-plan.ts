@@ -11,11 +11,14 @@ import { MIN_SPLIT_PIECE_SECONDS } from "@twick/timeline";
  *   end (the caption adder clamps neither). Under 0.2 s of room, nothing is added.
  * - On a subtitle (`s <= playhead < e`, so on a boundary it is the one STARTING there): that
  *   subtitle splits in two at the word break nearest the playhead. After Remove Silences subtitles
- *   run nearly back to back, so this is the common case. Without word times that line up with the
- *   words (a subtitle added here, or an old one), the breaks are the splitter's own positional
- *   ones, `s + dur * i / n`: never the raw playhead, which a second press, or a press after a card
- *   click (it seeks to the subtitle's start), leaves on the subtitle's first frame, where the split
- *   would ship a one-frame sliver.
+ *   run nearly back to back, so this is the common case. A break qualifies only when it leaves at
+ *   least MIN_SPLIT_SUBTITLE_SECONDS (0.3 s) on BOTH sides, timed or untimed (PR #870 audit, I5:
+ *   351 of about 14,000 split positions on a Remove-Silenced video left a piece under 0.1 s, the
+ *   shortest 74 ms). No qualifying break refuses `cannot-split`. Without word times that line up
+ *   with the words (a subtitle added here, or an old one), the breaks are the splitter's own
+ *   positional ones, `s + dur * i / n`: never the raw playhead, which a second press, or a press
+ *   after a card click (it seeks to the subtitle's start), leaves on the subtitle's first frame,
+ *   where the split would ship a one-frame sliver.
  * - On an UNTOUCHED "New subtitle" placeholder (founder call, 2026-10-30): a repeat press leaves
  *   the playhead on the placeholder it just added, so instead of splitting it the next subtitle
  *   goes right after it, by the same gap rules, or the press refuses no-room. A third press at
@@ -46,6 +49,12 @@ export const NEW_SUBTITLE_TEXT = "New subtitle";
 export const ADD_SUBTITLE_SECONDS = 1;
 /** Less room than this at the playhead and nothing is added. */
 export const MIN_ADD_SUBTITLE_SECONDS = 0.2;
+/**
+ * The shortest piece Add subtitle's split may leave on EITHER side: the creator-facing minimum, a
+ * subtitle long enough to read and to grab. MIN_SPLIT_PIECE_SECONDS (one frame) stays the engine
+ * floor beneath it.
+ */
+export const MIN_SPLIT_SUBTITLE_SECONDS = 0.3;
 
 /**
  * Slack on the 0.2 s room test, so exactly 0.2 s before the video's end (10 - 9.8 =
@@ -94,6 +103,13 @@ function positionalSplitSeconds(c: AddSubtitleCaption, i: number, n: number): nu
 /** canSplitElement's test, made strict and in its own arithmetic: both pieces over one frame. */
 function clearsFrameMargin(c: AddSubtitleCaption, at: number): boolean {
   return at - c.s > MIN_SPLIT_PIECE_SECONDS && c.e - at > MIN_SPLIT_PIECE_SECONDS;
+}
+
+/** Both pieces at least MIN_SPLIT_SUBTITLE_SECONDS, with the room test's slack so 0.3 s exactly
+ *  (1.3 - 1 = 0.30000000000000004, 1.6 - 1.3 = 0.30000000000000004) counts either way. */
+function leavesReadablePieces(c: AddSubtitleCaption, at: number): boolean {
+  const min = MIN_SPLIT_SUBTITLE_SECONDS - ROOM_EPSILON_SECONDS;
+  return at - c.s >= min && c.e - at >= min;
 }
 
 export function planAddSubtitle(
@@ -177,7 +193,7 @@ function planSplit(c: AddSubtitleCaption, playhead: number): AddSubtitlePlan {
       if (!isWord(tokens[i - 1]) || !isWord(tokens[i])) continue;
       at = positionalSplitSeconds(c, i, tokens.length);
     }
-    if (at === null || !clearsFrameMargin(c, at)) continue;
+    if (at === null || !clearsFrameMargin(c, at) || !leavesReadablePieces(c, at)) continue;
     if (best === null || Math.abs(at - playhead) < Math.abs(best - playhead)) best = at;
   }
   if (best === null) return { kind: "refuse", reason: "cannot-split" };

@@ -445,9 +445,13 @@ export { useTextPanel, DEFAULT_TEXT_PROPS } from "./hooks/use-text-panel";
  * on it, exported so the HOST APP can execute both against the shipped dist (placement rules,
  * the split's word break, one undo entry, the refusal event).
  */
-export { planAddSubtitle } from "./helpers/add-subtitle-plan";
+export { planAddSubtitle, MIN_SPLIT_SUBTITLE_SECONDS } from "./helpers/add-subtitle-plan";
 export type { AddSubtitlePlan, AddSubtitleCaption } from "./helpers/add-subtitle-plan";
 export { useCaptionsPanel, SUBTITLE_ADD_REFUSED_EVENT } from "./hooks/use-captions-panel";
+// The Subtitles panel as the studio mounts it, FOR TESTING: that the shell does not re-render on a
+// seek (PR #870 audit, M7) and that Add subtitle reads the playhead CaptionPlayerLink keeps are
+// properties of this container's wiring, so the app suite renders it.
+export { CaptionsPanelContainer } from "./components/container/captions-panel-container";
 
 // Exported for the same reason as SeekTrack in @twick/video-editor: the previous eye-contact
 // UI was gated only by string-matching the bundle, and `if (true) return null` — the component

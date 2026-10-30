@@ -5,6 +5,7 @@ import {
   resolveIds,
 } from "@twick/timeline";
 import { isMainVideoTrack } from "../helpers/editor.utils";
+import { recordCaptionRemoval } from "../helpers/caption-records";
 
 /**
  * Custom hook to manage timeline control operations.
@@ -88,7 +89,12 @@ const useTimelineControl = () => {
         editor.removeTrack(el);
         removed++;
       } else if (el instanceof TrackElement) {
-        if (isTrackLocked(editor.getTrackById(el.getTrackId()))) { keptLocked++; continue; } // clip on a locked track — don't delete
+        const elTrack = editor.getTrackById(el.getTrackId());
+        if (isTrackLocked(elTrack)) { keptLocked++; continue; } // clip on a locked track — don't delete
+        // A subtitle the creator deletes stays deleted: its id goes on the Subtitles track's
+        // removedSourceIds inside this same batch, so a later restore of nearby footage never
+        // brings it back, and one undo takes back both (helpers/caption-records.ts).
+        recordCaptionRemoval(elTrack, el);
         editor.rippleRemoveElement(el);
         removed++;
       }

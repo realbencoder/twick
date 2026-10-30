@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useTimelineContext } from "@twick/timeline";
 import { useLivePlayerTime } from "@twick/live-player";
 import { CaptionsPanel } from "../panel/captions-panel";
@@ -15,11 +15,12 @@ import { activeIndexAt, type CaptionCue } from "../../helpers/caption-sync";
  * only when the id actually changes (cue cadence, ~seconds), so the card list —
  * potentially hundreds of controlled textareas — never sees the 20Hz stream.
  *
- * useCaptionsPanel (Add subtitle) DOES read the other, memoized LivePlayerContext, for its
- * ref-backed getCurrentTime() at click time. That value changes on seek, play/pause and volume
- * but not on ticks, so this container's shell re-renders on those discrete events only, and the
- * memo'd CaptionRow cards skip those re-renders. Keep it that way: never useLivePlayerTime() in
- * the hook or the container body.
+ * It also keeps the hook's `playheadRef` current, which is where Add subtitle reads the playhead
+ * at click time. So neither useCaptionsPanel nor this container's body subscribes to ANY player
+ * context, and the panel shell re-renders only when the active cue changes, never on a tick or a
+ * seek inside one cue (PR #870 audit, M7: it used to re-render on every seek, because the hook
+ * read LivePlayerContext, whose value changes on each one). Keep it that way: never
+ * useLivePlayerTime() or useLivePlayerContext() in the hook or the container body.
  *
  * The computation runs in an EFFECT, never during render (a parent setState from a
  * child's render phase is illegal, and a ref advanced in a discarded concurrent
@@ -31,13 +32,22 @@ function CaptionPlayerLink({
   cues,
   cueVersion,
   onActiveChange,
+  playheadRef,
 }: {
   cues: CaptionCue[];
   cueVersion: number;
   onActiveChange: (id: string | null) => void;
+  /** useCaptionsPanel's playhead, read by Add subtitle at click time. */
+  playheadRef: MutableRefObject<number | null>;
 }) {
   const currentTime = useLivePlayerTime();
   const lastIdRef = useRef<string | null>(null);
+
+  // Before the active-cue effect, and in an effect (a ref written in a discarded concurrent
+  // render would hold a time the screen never showed).
+  useEffect(() => {
+    playheadRef.current = currentTime;
+  }, [currentTime, playheadRef]);
 
   useEffect(() => {
     const idx = activeIndexAt(cues, currentTime);
@@ -53,7 +63,7 @@ function CaptionPlayerLink({
 }
 
 export function CaptionsPanelContainer() {
-  const captionsPanelProps = useCaptionsPanel();
+  const { playheadRef, ...captionsPanelProps } = useCaptionsPanel();
   const { followPlayheadEnabled } = useTimelineContext();
   const [activeId, setActiveId] = useState<string | null>(null);
 
@@ -69,6 +79,7 @@ export function CaptionsPanelContainer() {
         cues={cues}
         cueVersion={captionsPanelProps.cueVersion}
         onActiveChange={setActiveId}
+        playheadRef={playheadRef}
       />
       <CaptionsPanel
         {...captionsPanelProps}

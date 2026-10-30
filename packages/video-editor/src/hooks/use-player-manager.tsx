@@ -1,4 +1,5 @@
 import { reorderTracksForZOrder } from "../helpers/z-order";
+import { carryCaptionRecords, recordCaptionRemoval } from "../helpers/caption-records";
 import { CANVAS_OPERATIONS, CanvasElement, useTwickCanvas } from "@twick/canvas";
 import {
   CaptionElement,
@@ -116,7 +117,14 @@ export const usePlayerManager = ({
     }
     if (operation === CANVAS_OPERATIONS.CAPTION_PROPS_UPDATED) {
       const captionsTrack = editor.getCaptionsTrack();
-      captionsTrack?.setProps(data.props);
+      // data.props is the track's props as the canvas last drew them, plus the drag. The
+      // creator's subtitle records come from the LIVE track instead, so this wholesale write can
+      // neither drop one written since nor revive one Regenerate cleared.
+      if (captionsTrack) {
+        captionsTrack.setProps(
+          carryCaptionRecords(data.props ?? {}, captionsTrack.getProps() as Record<string, unknown>)
+        );
+      }
       editor.refresh();
       updateCanvasRef.current(getCurrentTime(), true);
     } else if (operation === CANVAS_OPERATIONS.WATERMARK_UPDATED) {
@@ -333,7 +341,12 @@ export const usePlayerManager = ({
         // Locked track — the canvas right-click Delete must not remove its clips (audit #2; this
         // path bypasses deleteItem's guard, so it needs its own).
         if ((track.getProps() as { locked?: boolean } | undefined)?.locked === true) return;
-        editor.rippleRemoveElement(element as TrackElement);
+        // A subtitle deleted here stays deleted, recorded in the SAME undo entry as the removal
+        // (see deleteItem in use-timeline-control.tsx; helpers/caption-records.ts).
+        editor.batchHistory(() => {
+          recordCaptionRemoval(track, element as TrackElement);
+          editor.rippleRemoveElement(element as TrackElement);
+        });
         currentChangeLog.current = currentChangeLog.current + 1;
         setSelectedItem(null);
         // Refresh canvas so the deleted element is removed from the canvas
@@ -400,5 +413,8 @@ export const usePlayerManager = ({
     sendBackward,
     deleteElement,
     isElementOnLockedTrack,
+    // Returned FOR TESTING (the canvas calls it through useTwickCanvas's onCanvasOperation): what
+    // a canvas gesture writes to the timeline is decided here, and the app suite executes it.
+    handleCanvasOperation,
   };
 };

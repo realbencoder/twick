@@ -116,6 +116,19 @@ export type { StripWindow, StripWindowInput } from "./helpers/strip-window";
 // cannot tell "front moves toward index 0" from "front moves toward the end").
 export { reorderTracksForZOrder } from "./helpers/z-order";
 export type { ZOrderDirection } from "./helpers/z-order";
+// The creator's subtitle records (edited / removed by hand), written by the Subtitles panel, the
+// timeline's Delete and the canvas, read by the host's restore planner. Exported so the studio
+// writes them through the same helpers and the app suite can execute them against the dist.
+export {
+  CAPTION_TEXT_EDITED_PROP,
+  CAPTION_EDITED_IDS_PROP,
+  CAPTION_REMOVED_IDS_PROP,
+  recordCaptionTrackId,
+  markCaptionTextEdited,
+  recordCaptionRemoval,
+  carryCaptionRecords,
+} from "./helpers/caption-records";
+export type { CaptionRecordKey } from "./helpers/caption-records";
 // Ruler tick decisions. Exported for the same reason as the strip-window helpers above: so the app
 // suite can EXECUTE the shipped arithmetic. Grep-only marker tests let nine silent reverts through
 // on an earlier change in this package.
@@ -155,6 +168,10 @@ export { TrackElementView } from "./components/track/track-element";
 // regex over the bundle cannot tell those apart from their mutations either. It needs only the
 // timeline and live-player providers. See tests/unit/timeline-manager-commit.test.tsx in the app.
 export { useTimelineManager } from "./hooks/use-timeline-manager";
+// usePlayerManager too, FOR TESTING: the canvas's Delete and caption drag write the creator's
+// subtitle records (helpers/caption-records.ts) here. See
+// tests/unit/subtitle-creator-records-dist.test.tsx in the app.
+export { usePlayerManager } from "./hooks/use-player-manager";
 export type {
   SeamGiveBackPlan,
   SeamElementLike,

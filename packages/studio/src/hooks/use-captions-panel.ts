@@ -7,7 +7,12 @@ import {
   TrackElement,
   useTimelineContext,
 } from "@twick/timeline";
-import { useLivePlayerContext } from "@twick/live-player";
+import {
+  CAPTION_EDITED_IDS_PROP,
+  markCaptionTextEdited,
+  recordCaptionRemoval,
+  recordCaptionTrackId,
+} from "@twick/video-editor";
 import { CAPTION_PROPS } from "../helpers/constant";
 import { mergeEditingText, shouldCommitCaptionEdit } from "../helpers/caption-sync";
 import {
@@ -71,12 +76,19 @@ function toPlanCaption(element: TrackElement): AddSubtitleCaption {
  *    for selection, mutation, and React keys alike.
  *
  * Add subtitle acts at the PLAYHEAD (founder call 2026-10-29; placement rules in
- * helpers/add-subtitle-plan.ts). The playhead is read at click time through
- * useLivePlayerContext().getCurrentTime(), which is ref-backed. That context's value is memoized
- * and changes only on seek, play/pause and volume, so the panel re-renders on those, never on
- * clock ticks. This hook must never subscribe to the ticking clock (useLivePlayerTime):
- * CaptionPlayerLink is the ONLY tick subscriber in the captions stack, and the card list would
- * otherwise re-render at 20Hz during playback.
+ * helpers/add-subtitle-plan.ts). The playhead is read at click time from `playheadRef`, which
+ * CaptionPlayerLink (the container's ONLY clock subscriber) keeps current. This hook subscribes to
+ * no player context at all: it once read useLivePlayerContext() for getCurrentTime(), and since
+ * that context's value changes on every seek, the whole panel shell re-rendered on every seek
+ * (PR #870 audit, M7: 6.3 ms a seek with 2,000 subtitles). Never subscribe here, to either
+ * context: CaptionPlayerLink absorbs the clock, and the card list would otherwise re-render at
+ * 20Hz during playback.
+ *
+ * The creator's own edits and removals are RECORDED (PR #870 audit, C1 + I1): a committed text
+ * edit stamps `props.textEdited` and adds the id to the track's `editedSourceIds`, and Remove adds
+ * it to `removedSourceIds`, each in the same undo entry as the edit or removal. The host's restore
+ * planner reads them so a restore never puts stored words back over the creator's. See
+ * @twick/video-editor helpers/caption-records.ts.
  *
  * Commit model (founder decision 2026-08-10): typing gives LIVE canvas feedback via a
  * debounced el.setText + editor.refresh() — refresh() is public and explicitly
@@ -92,7 +104,9 @@ export const useCaptionsPanel = () => {
    *  even when currentTime hasn't moved (e.g. Remove Silences applied while paused). */
   const [cueVersion, setCueVersion] = useState(0);
   const { editor, changeLog, selectedItem, setSelectedItem } = useTimelineContext();
-  const { getCurrentTime } = useLivePlayerContext();
+  /** The playhead, in timeline seconds, as CaptionPlayerLink last saw it; null until it mounts.
+   *  Read at click time only (a ref, so no render follows the clock or a seek). */
+  const playheadRef = useRef<number | null>(null);
 
   /** id → in-progress textarea value (uncommitted). Written ONLY by updateCaption —
    *  a mere focus must never create a dirty entry, or a no-edit focus+blur commits
@@ -193,6 +207,8 @@ export const useCaptionsPanel = () => {
 
   const ensureCaptionsTrack = useCallback((): Track => {
     let t = track();
+    // Only a NEW track gets props here, so there are no creator records to carry: an existing
+    // track (and its editedSourceIds / removedSourceIds) is returned untouched.
     if (!t) {
       t = editor.addTrack("Subtitles", "caption");
       const props: Record<string, any> = {
@@ -294,11 +310,20 @@ export const useCaptionsPanel = () => {
     [editor, track, ensureCaptionsTrack, resolveElement, setSelectedItem, syncFromTimeline]
   );
 
-  /** The panel's Add subtitle button: at the playhead, read now (not subscribed). */
-  const addCaption = useCallback(
-    () => addCaptionAt(getCurrentTime()),
-    [addCaptionAt, getCurrentTime]
-  );
+  /** The panel's Add subtitle button: at the playhead, read now from `playheadRef` (never
+   *  subscribed). With no CaptionPlayerLink beside the panel there is no playhead to act at: say
+   *  so instead of guessing one. */
+  const addCaption = useCallback((): Promise<void> => {
+    const t = playheadRef.current;
+    if (t === null) {
+      console.error(
+        "[Subtitles] Add subtitle has no playhead: render CaptionPlayerLink beside the panel"
+      );
+      announceAddRefused("add-failed");
+      return Promise.resolve();
+    }
+    return addCaptionAt(t);
+  }, [addCaptionAt]);
 
   const splitCaption = useCallback(
     async (id: string) => {
@@ -327,7 +352,12 @@ export const useCaptionsPanel = () => {
         const neighbour = elements[idx + 1] ?? elements[idx - 1] ?? null;
         if (neighbour) setSelectedItem(neighbour);
       }
-      editor.rippleRemoveElement(element);
+      // The creator removed this subtitle on purpose: its id goes on the track's removedSourceIds
+      // in the SAME undo entry as the removal, so restoring nearby footage never brings it back.
+      editor.batchHistory(() => {
+        recordCaptionRemoval(editor.getTrackById(element.getTrackId()), element);
+        editor.rippleRemoveElement(element);
+      });
       syncFromTimeline();
     },
     [editor, resolveElement, selectedItem, setSelectedItem, track, syncFromTimeline]
@@ -402,15 +432,24 @@ export const useCaptionsPanel = () => {
         }
         return;
       }
-      element.setText(text as string);
-      if (decision.resyncWords) {
-        editor.adjustCaptionWordsForTimeChange(
-          element,
-          element.getStart(),
-          element.getEnd()
-        );
-      }
-      editor.updateElement(element); // UNCONDITIONAL on the real-change path
+      // ONE undo entry for the text AND the record of it: the creator changed these words, so
+      // `textEdited` goes on the element (it rides splits and cuts) and its id on the track's
+      // editedSourceIds (it outlives a cut that removes the subtitle whole). A restore then keeps
+      // the creator's words and never rebuilds them from the stored text (PR #870 audit, C1).
+      editor.batchHistory(() => {
+        element.setText(text as string);
+        markCaptionTextEdited(element);
+        if (decision.resyncWords) {
+          editor.adjustCaptionWordsForTimeChange(
+            element,
+            element.getStart(),
+            element.getEnd()
+          );
+        }
+        const elementTrack = editor.getTrackById(element.getTrackId());
+        if (elementTrack) recordCaptionTrackId(elementTrack, CAPTION_EDITED_IDS_PROP, id);
+        editor.updateElement(element); // UNCONDITIONAL on the real-change path
+      });
     },
     [editor, resolveElement, setEditingId]
   );
@@ -453,6 +492,7 @@ export const useCaptionsPanel = () => {
   }, [selectedItem, captions]);
 
   return {
+    playheadRef,
     captions,
     cueVersion,
     selectedId,
