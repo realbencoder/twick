@@ -11,7 +11,11 @@ import { MIN_SPLIT_PIECE_SECONDS } from "@twick/timeline";
  *   end (the caption adder clamps neither). Under 0.2 s of room, nothing is added.
  * - On a subtitle (`s <= playhead < e`, so on a boundary it is the one STARTING there): that
  *   subtitle splits in two at the word break nearest the playhead. After Remove Silences subtitles
- *   run nearly back to back, so this is the common case.
+ *   run nearly back to back, so this is the common case. Without word times that line up with the
+ *   words (a subtitle added here, or an old one), the breaks are the splitter's own positional
+ *   ones, `s + dur * i / n`: never the raw playhead, which a second press, or a press after a card
+ *   click (it seeks to the subtitle's start), leaves on the subtitle's first frame, where the split
+ *   would ship a one-frame sliver.
  *
  * Pure, so the app's unit suite can execute it against the shipped dist (the fork has no runner).
  */
@@ -35,10 +39,11 @@ export const ADD_SUBTITLE_SECONDS = 1;
 export const MIN_ADD_SUBTITLE_SECONDS = 0.2;
 
 /**
- * Keeps a split time clamped to a caption's one-frame margin inside it after float rounding:
- * `(s + 1/30) - s` can come out a hair under 1/30, and canSplitElement would then refuse it.
+ * Slack on the 0.2 s room test, so exactly 0.2 s before the video's end (10 - 9.8 =
+ * 0.19999999999999929) and exactly 0.2 s before a subtitle (5 - 4.8 = 0.20000000000000018) both
+ * count as room.
  */
-const EDGE_INSET_SECONDS = 1e-6;
+const ROOM_EPSILON_SECONDS = 1e-6;
 
 /**
  * A word start in ms as a split time in seconds that the splitter puts on the RIGHT.
@@ -55,6 +60,31 @@ function msWordStartToSplitSeconds(w: number): number {
     step *= 2;
   }
   return at;
+}
+
+/**
+ * The split time that makes ElementSplitter's positional fallback cut before token `i` of `n`.
+ *
+ * Without aligned word times the splitter cuts at `floor(n * (splitTime - s) / (e - s))`. The
+ * exact proportional time `s + dur * i / n` often lands on `i - 1` in floating point (1 to 2 with
+ * five words: 1.4 gives index 1), so step it up until the splitter's own arithmetic says `i`.
+ * Null when it cannot (a caption too short for the step to settle).
+ */
+function positionalSplitSeconds(c: AddSubtitleCaption, i: number, n: number): number | null {
+  const dur = c.e - c.s;
+  const indexAt = (t: number) => Math.floor(n * ((t - c.s) / dur));
+  let at = c.s + (dur * i) / n;
+  let step = Number.EPSILON * Math.max(1, Math.abs(at));
+  for (let k = 0; k < 64 && indexAt(at) < i; k++) {
+    at += step;
+    step *= 2;
+  }
+  return indexAt(at) === i ? at : null;
+}
+
+/** canSplitElement's test, made strict and in its own arithmetic: both pieces over one frame. */
+function clearsFrameMargin(c: AddSubtitleCaption, at: number): boolean {
+  return at - c.s > MIN_SPLIT_PIECE_SECONDS && c.e - at > MIN_SPLIT_PIECE_SECONDS;
 }
 
 export function planAddSubtitle(
@@ -78,41 +108,43 @@ export function planAddSubtitle(
     if (c.s > playhead && c.s < nextStart) nextStart = c.s;
   }
   const end = Math.min(playhead + ADD_SUBTITLE_SECONDS, nextStart, videoEnd);
-  if (end - playhead < MIN_ADD_SUBTITLE_SECONDS) {
+  if (end - playhead < MIN_ADD_SUBTITLE_SECONDS - ROOM_EPSILON_SECONDS) {
     return { kind: "refuse", reason: "no-room" };
   }
   return { kind: "add", start: playhead, end };
 }
 
 function planSplit(c: AddSubtitleCaption, playhead: number): AddSubtitlePlan {
-  // The splitter's own tokenising (split on single spaces), so "aligned" means what it means there.
+  // The splitter's own tokenising (split on single spaces), so "aligned" and "index i" mean what
+  // they mean there.
   const tokens = (c.text ?? "").split(" ");
-  const wordCount = tokens.filter((w) => w.trim().length > 0).length;
+  const isWord = (w: string | undefined) => w !== undefined && w.trim().length > 0;
+  const wordCount = tokens.filter(isWord).length;
   if (wordCount < 2) return { kind: "refuse", reason: "one-word" };
 
   const words =
     Array.isArray(c.wordsMs) && c.wordsMs.length === tokens.length ? c.wordsMs : null;
+  // The splitter's unit test: seconds when every value sits under twice the caption's end.
+  const max = words ? Math.max(...words) : 0;
+  const isSeconds = max > 0 && max < c.e * 2;
 
-  if (words) {
-    // The splitter's unit test: seconds when every value sits under twice the caption's end.
-    const max = Math.max(...words);
-    const isSeconds = max > 0 && max < c.e * 2;
-    let best: number | null = null;
-    // Index 0 is the first word's own start: splitting there leaves the first half empty.
-    for (let i = 1; i < words.length; i++) {
-      const at = isSeconds ? words[i] : msWordStartToSplitSeconds(words[i]);
-      // Strictly inside the one-frame margin, in canSplitElement's own arithmetic.
-      if (!(at - c.s > MIN_SPLIT_PIECE_SECONDS && c.e - at > MIN_SPLIT_PIECE_SECONDS)) continue;
-      if (best === null || Math.abs(at - playhead) < Math.abs(best - playhead)) best = at;
+  let best: number | null = null;
+  // Break i cuts before token i. Index 0 would leave the first half empty.
+  for (let i = 1; i < tokens.length; i++) {
+    let at: number | null;
+    if (words) {
+      // The word's own start: the splitter keeps a word left only when it starts strictly
+      // before the split time, so this word opens the right half.
+      at = isSeconds ? words[i] : msWordStartToSplitSeconds(words[i]);
+    } else {
+      // No word times that line up: the splitter divides by position, so only its positional
+      // breaks, and only those with a real word on both sides (no empty or blank half).
+      if (!isWord(tokens[i - 1]) || !isWord(tokens[i])) continue;
+      at = positionalSplitSeconds(c, i, tokens.length);
     }
-    if (best === null) return { kind: "refuse", reason: "cannot-split" };
-    return { kind: "split", elementId: c.id, at: best };
+    if (at === null || !clearsFrameMargin(c, at)) continue;
+    if (best === null || Math.abs(at - playhead) < Math.abs(best - playhead)) best = at;
   }
-
-  // No word times that line up with the words: split at the playhead, kept a frame inside, and
-  // let the splitter divide the text by position.
-  const lo = c.s + MIN_SPLIT_PIECE_SECONDS + EDGE_INSET_SECONDS;
-  const hi = c.e - MIN_SPLIT_PIECE_SECONDS - EDGE_INSET_SECONDS;
-  if (lo > hi) return { kind: "refuse", reason: "cannot-split" };
-  return { kind: "split", elementId: c.id, at: Math.min(hi, Math.max(lo, playhead)) };
+  if (best === null) return { kind: "refuse", reason: "cannot-split" };
+  return { kind: "split", elementId: c.id, at: best };
 }

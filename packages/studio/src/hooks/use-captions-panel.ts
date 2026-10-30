@@ -68,9 +68,11 @@ function toPlanCaption(element: TrackElement): AddSubtitleCaption {
  *
  * Add subtitle acts at the PLAYHEAD (founder call 2026-10-29; placement rules in
  * helpers/add-subtitle-plan.ts). The playhead is read at click time through
- * useLivePlayerContext().getCurrentTime(), which is ref-backed: this hook must never subscribe to
- * the ticking clock (useLivePlayerTime), because CaptionPlayerLink is the ONLY clock subscriber in
- * the captions stack and the card list would otherwise re-render at 20Hz during playback.
+ * useLivePlayerContext().getCurrentTime(), which is ref-backed. That context's value is memoized
+ * and changes only on seek, play/pause and volume, so the panel re-renders on those, never on
+ * clock ticks. This hook must never subscribe to the ticking clock (useLivePlayerTime):
+ * CaptionPlayerLink is the ONLY tick subscriber in the captions stack, and the card list would
+ * otherwise re-render at 20Hz during playback.
  *
  * Commit model (founder decision 2026-08-10): typing gives LIVE canvas feedback via a
  * debounced el.setText + editor.refresh() — refresh() is public and explicitly
@@ -233,6 +235,10 @@ export const useCaptionsPanel = () => {
         // (the same validation and collision check addElementToTrack runs) and a render-only
         // refresh(), and the batch's trailing commit is the single snapshot. The failure is
         // caught INSIDE the batch so a throw can never skip that commit after addTrack ran.
+        // refresh() only on success: it bumps the version, and a bumped version is what makes
+        // the batch commit (an undo entry, a save). A refused add onto an existing track then
+        // commits nothing; one that just created the track commits that track, which addTrack
+        // already wrote to the live timeline, so the history matches what is on screen.
         const failure = editor.batchHistory((): unknown => {
           const target = ensureCaptionsTrack();
           let err: unknown = null;
@@ -243,7 +249,7 @@ export const useCaptionsPanel = () => {
           } catch (e) {
             err = e;
           }
-          editor.refresh();
+          if (!err) editor.refresh();
           return err;
         });
         if (failure) {

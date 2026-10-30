@@ -6,13 +6,20 @@ import { useCaptionsPanel } from "../../hooks/use-captions-panel";
 import { activeIndexAt, type CaptionCue } from "../../helpers/caption-sync";
 
 /**
- * CaptionPlayerLink — the ONLY LivePlayerContext subscriber in the captions stack.
+ * CaptionPlayerLink — the ONLY subscriber to the TICKING clock (useLivePlayerTime) in the
+ * captions stack.
  *
- * LivePlayerContext rebuilds its value object every render, so every consumer
- * re-renders at ~20Hz during playback. This component renders NOTHING and exists
+ * The playback time lives in its own context and changes ~20Hz during playback, so every
+ * consumer of it re-renders at that rate. This component renders NOTHING and exists
  * solely to absorb that churn: it derives the active cue id and notifies the parent
  * only when the id actually changes (cue cadence, ~seconds), so the card list —
  * potentially hundreds of controlled textareas — never sees the 20Hz stream.
+ *
+ * useCaptionsPanel (Add subtitle) DOES read the other, memoized LivePlayerContext, for its
+ * ref-backed getCurrentTime() at click time. That value changes on seek, play/pause and volume
+ * but not on ticks, so this container's shell re-renders on those discrete events only, and the
+ * memo'd CaptionRow cards skip those re-renders. Keep it that way: never useLivePlayerTime() in
+ * the hook or the container body.
  *
  * The computation runs in an EFFECT, never during render (a parent setState from a
  * child's render phase is illegal, and a ref advanced in a discarded concurrent
