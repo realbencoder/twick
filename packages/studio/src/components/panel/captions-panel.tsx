@@ -154,7 +154,9 @@ export function CaptionsPanel({
   editingId: string | null;
   /** TimelineContext.followPlayheadEnabled — the shared follow toggle. */
   followEnabled: boolean;
-  addCaption: () => void;
+  /** Adds at the playhead (or splits the subtitle under it). Called with NO arguments: the
+   *  buttons wrap it, so a click event can never arrive as a time. */
+  addCaption: () => void | Promise<void>;
   splitCaption: (id: string) => void | Promise<void>;
   deleteCaption: (id: string) => void;
   updateCaption: (id: string, text: string) => void;
@@ -284,7 +286,7 @@ export function CaptionsPanel({
             <span className="captions-panel-count">No subtitles yet</span>
           ) : null}
           <button
-            onClick={addCaption}
+            onClick={() => addCaption()}
             className="btn-primary captions-panel-add-button"
             title="Add subtitle"
           >
@@ -302,7 +304,7 @@ export function CaptionsPanel({
             track.
           </p>
           <button
-            onClick={addCaption}
+            onClick={() => addCaption()}
             className="btn-primary captions-panel-empty-button"
             title="Add first caption"
           >

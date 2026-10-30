@@ -2,12 +2,54 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CAPTION_STYLE,
   CaptionElement,
+  TRACK_TYPES,
   Track,
+  TrackElement,
   useTimelineContext,
 } from "@twick/timeline";
+import { useLivePlayerContext } from "@twick/live-player";
 import { CAPTION_PROPS } from "../helpers/constant";
 import { mergeEditingText, shouldCommitCaptionEdit } from "../helpers/caption-sync";
+import { planAddSubtitle, type AddSubtitleCaption } from "../helpers/add-subtitle-plan";
 import type { CaptionPanelEntry } from "../types";
+
+/**
+ * Sent on `window` when Add subtitle does nothing, `detail: { reason }`: the planner's
+ * "no-room" | "one-word" | "cannot-split", or "add-failed" when the track refused the new
+ * subtitle (never expected; the plan keeps clear of every live caption). The host toasts it, the
+ * same window-event shape as `twick-media-add-failed`, so a refused press is never silent.
+ */
+export const SUBTITLE_ADD_REFUSED_EVENT = "twick-subtitle-add-refused";
+
+function announceAddRefused(reason: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent(SUBTITLE_ADD_REFUSED_EVENT, { detail: { reason } })
+  );
+}
+
+/** A caption element as the planner reads it. `wordsMs` is passed only when it lines up with the
+ *  text's words, props first then metadata: exactly the array ElementSplitter will partition by,
+ *  so the break the planner picks is the one the split makes. */
+function toPlanCaption(element: TrackElement): AddSubtitleCaption {
+  const text = (element as CaptionElement).getText() ?? "";
+  const tokens = text.split(" ").length;
+  const props = (element.getProps() ?? {}) as Record<string, unknown>;
+  const meta = (element.getMetadata?.() ?? {}) as Record<string, unknown>;
+  const aligned = (v: unknown): v is number[] =>
+    Array.isArray(v) && v.length === tokens;
+  return {
+    id: element.getId(),
+    s: element.getStart(),
+    e: element.getEnd(),
+    text,
+    wordsMs: aligned(props.wordsMs)
+      ? props.wordsMs
+      : aligned(meta.wordsMs)
+      ? meta.wordsMs
+      : null,
+  };
+}
 
 /**
  * Subtitles panel state — id-addressed, timeline-synced.
@@ -24,6 +66,12 @@ import type { CaptionPanelEntry } from "../types";
  *    Element ids are stable across serialize/deserialize, so they are the join key
  *    for selection, mutation, and React keys alike.
  *
+ * Add subtitle acts at the PLAYHEAD (founder call 2026-10-29; placement rules in
+ * helpers/add-subtitle-plan.ts). The playhead is read at click time through
+ * useLivePlayerContext().getCurrentTime(), which is ref-backed: this hook must never subscribe to
+ * the ticking clock (useLivePlayerTime), because CaptionPlayerLink is the ONLY clock subscriber in
+ * the captions stack and the card list would otherwise re-render at 20Hz during playback.
+ *
  * Commit model (founder decision 2026-08-10): typing gives LIVE canvas feedback via a
  * debounced el.setText + editor.refresh() — refresh() is public and explicitly
  * skipHistory, so keystrokes create ZERO undo entries — and blur is the SOLE
@@ -38,6 +86,7 @@ export const useCaptionsPanel = () => {
    *  even when currentTime hasn't moved (e.g. Remove Silences applied while paused). */
   const [cueVersion, setCueVersion] = useState(0);
   const { editor, changeLog, selectedItem, setSelectedItem } = useTimelineContext();
+  const { getCurrentTime } = useLivePlayerContext();
 
   /** id → in-progress textarea value (uncommitted). Written ONLY by updateCaption —
    *  a mere focus must never create a dirty entry, or a no-edit focus+blur commits
@@ -151,18 +200,94 @@ export const useCaptionsPanel = () => {
     return t as Track;
   }, [editor, track]);
 
-  const addCaption = useCallback(() => {
-    const t = ensureCaptionsTrack();
-    // Start after the last FRESH element — not after a possibly stale local list.
-    const elements = t.getElements();
-    const start =
-      elements.length > 0 ? elements[elements.length - 1].getEnd() : 0;
-    const captionElement = new CaptionElement("New Caption", start, start + 1);
-    editor.addElementToTrack(t, captionElement);
-    // No optimistic push: the changeLog effect owns the list. A transient id-less row
-    // would make Split/Delete on it resolve getElementById(undefined) — a silent no-op.
-    syncFromTimeline();
-  }, [editor, ensureCaptionsTrack, syncFromTimeline]);
+  /**
+   * Add subtitle at `t`: a new "New subtitle" in a gap, or a split of the subtitle under `t` at
+   * its nearest word break with the right half selected. One undo entry per press either way.
+   * Resolves once the edit has landed; never rejects (a failure is logged and announced).
+   */
+  const addCaptionAt = useCallback(
+    async (t: number): Promise<void> => {
+      const captionTrack = track();
+      let videoEnd = -Infinity;
+      for (const videoTrack of editor.getTracksByType(TRACK_TYPES.VIDEO)) {
+        for (const el of videoTrack.getElements()) {
+          if (el.getEnd() > videoEnd) videoEnd = el.getEnd();
+        }
+      }
+      const plan = planAddSubtitle(
+        captionTrack ? captionTrack.getElements().map(toPlanCaption) : [],
+        t,
+        videoEnd === -Infinity ? Infinity : videoEnd
+      );
+
+      if (plan.kind === "refuse") {
+        announceAddRefused(plan.reason);
+        return;
+      }
+
+      if (plan.kind === "add") {
+        const element = new CaptionElement("New subtitle", plan.start, plan.end);
+        // ONE undo entry even when this press also creates the Subtitles track: addTrack and
+        // addElementToTrack each commit their own snapshot, and addElementToTrack's commit lands
+        // after an await, outside any batch. So the element goes on through the track's friend
+        // (the same validation and collision check addElementToTrack runs) and a render-only
+        // refresh(), and the batch's trailing commit is the single snapshot. The failure is
+        // caught INSIDE the batch so a throw can never skip that commit after addTrack ran.
+        const failure = editor.batchHistory((): unknown => {
+          const target = ensureCaptionsTrack();
+          let err: unknown = null;
+          try {
+            if (!target.createFriend().addElement(element)) {
+              err = new Error("the Subtitles track refused the new subtitle");
+            }
+          } catch (e) {
+            err = e;
+          }
+          editor.refresh();
+          return err;
+        });
+        if (failure) {
+          console.error("[Subtitles] Add subtitle failed:", failure);
+          announceAddRefused("add-failed");
+          syncFromTimeline();
+          return;
+        }
+        setSelectedItem(element);
+        // No optimistic push: the changeLog effect owns the list. A transient id-less row
+        // would make Split/Delete on it resolve getElementById(undefined), a silent no-op.
+        syncFromTimeline();
+        return;
+      }
+
+      const element = resolveElement(plan.elementId);
+      if (!element) {
+        announceAddRefused("cannot-split");
+        return;
+      }
+      // The planner passes the chosen word's own start, and the splitter keeps a word in the
+      // first half only when it starts strictly before the split time, so that word opens the
+      // right half. splitElement is one trailing commit: one undo entry.
+      const result = await editor
+        .splitElement(element, plan.at)
+        .catch((err: unknown) => {
+          console.error("[Subtitles] Add subtitle could not split the subtitle:", err);
+          return null;
+        });
+      if (!result || !result.success || !result.secondElement) {
+        announceAddRefused("cannot-split");
+        return;
+      }
+      setSelectedItem(result.secondElement);
+      syncFromTimeline();
+    },
+    [editor, track, ensureCaptionsTrack, resolveElement, setSelectedItem, syncFromTimeline]
+  );
+
+  /** The panel's Add subtitle button: at the playhead, read now (not subscribed). */
+  const addCaption = useCallback(
+    () => addCaptionAt(getCurrentTime()),
+    [addCaptionAt, getCurrentTime]
+  );
 
   const splitCaption = useCallback(
     async (id: string) => {
@@ -322,6 +447,7 @@ export const useCaptionsPanel = () => {
     selectedId,
     editingId,
     addCaption,
+    addCaptionAt,
     splitCaption,
     deleteCaption,
     updateCaption,

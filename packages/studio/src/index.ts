@@ -440,6 +440,15 @@ export {
  */
 export { useTextPanel, DEFAULT_TEXT_PROPS } from "./hooks/use-text-panel";
 
+/**
+ * Add subtitle at the playhead: the pure placement planner and the Subtitles panel hook that acts
+ * on it, exported so the HOST APP can execute both against the shipped dist (placement rules,
+ * the split's word break, one undo entry, the refusal event).
+ */
+export { planAddSubtitle } from "./helpers/add-subtitle-plan";
+export type { AddSubtitlePlan, AddSubtitleCaption } from "./helpers/add-subtitle-plan";
+export { useCaptionsPanel, SUBTITLE_ADD_REFUSED_EVENT } from "./hooks/use-captions-panel";
+
 // Exported for the same reason as SeekTrack in @twick/video-editor: the previous eye-contact
 // UI was gated only by string-matching the bundle, and `if (true) return null` — the component
 // rendering NOTHING — passed that test twice. Only rendering it can tell.
