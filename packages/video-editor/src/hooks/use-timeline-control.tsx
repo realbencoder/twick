@@ -24,6 +24,27 @@ const pauseAllMediaSoon = () => {
   }, 100);
 };
 
+/** The host app's player controller, duck-typed (the app's WebCodecs PlaybackController). */
+type HostPlayerController = { pause?: () => void; seek?: (time: number) => void };
+const hostPlayerController = (): HostPlayerController | undefined =>
+  (globalThis as { __webcodecs_controller?: HostPlayerController }).__webcodecs_controller;
+
+/**
+ * A cut while playing pauses at the cut (Ben, 2026-10-30: "Pause at the cut"). Called only after
+ * a SUCCESSFUL cut: a refusal or an engine failure changes nothing, playback included.
+ *
+ * With the host's player controller, it pauses through `controller.pause()`, so its state, picture,
+ * sound and playhead stop together and the transport follows (rule #17: the controller drives the
+ * React state, never the reverse). pauseAllMediaSoon would pause the controller's pooled `<video>`s
+ * behind its back: it stayed "playing" with a frozen picture, no sound and a running playhead.
+ * Without a controller (a host on the stock player), every media element is paused, as before.
+ */
+const pauseAfterCut = () => {
+  const controller = hostPlayerController();
+  if (controller && typeof controller.pause === "function") controller.pause();
+  else pauseAllMediaSoon();
+};
+
 /**
  * A cut at the playhead that did nothing says why: PLAYHEAD_CUT_REFUSED_EVENT on window with
  * `{ action, reason, message }` for the host to show (a disabled button carries the same message as
@@ -188,25 +209,36 @@ const useTimelineControl = () => {
    * `{ action: "split", reason, message }` for the host to show, and returns false. That includes
    * an engine split that fails after the rules allowed it (`split-failed`).
    *
-   * After a split of the SELECTED clip, the right piece is selected (the playhead sits at its start,
-   * so the next S further on acts on it). After a split of the main clip with something else or
-   * nothing selected, the selection is left exactly as it was: both pieces are new ids, and
-   * selecting one would switch the host's side panel on every press.
+   * A successful split while playing pauses there (pauseAfterCut).
+   *
+   * Selection afterwards (both pieces are NEW ids: ElementSplitter clones the clip twice, so the
+   * original id never survives a split):
+   * - a selected B-roll, subtitle or text the split cut: its right piece is selected (the playhead
+   *   sits at its start), so the next S further on keeps cutting that clip instead of falling back
+   *   to the main video;
+   * - a selected MAIN video clip the split cut: nothing is selected (Ben, 2026-10-30: "Leave it
+   *   alone"). Selecting the right piece, a new id, made the host's side panel follow it and
+   *   unmounted the transcript on every S in the "click a word, press S" flow; the cleared
+   *   selection never moves it. (The timeline drops the gone id on its own; clearing it here
+   *   also drops any other ids, so a remaining one cannot become a new selection either.)
+   * - the main clip cut with something else or nothing selected: the selection is left as it was.
    */
   const splitAtPlayhead = async (t: number): Promise<boolean> => {
     const tracks = editor.getTimelineData()?.tracks ?? [];
     const target = resolveSplitTarget(selectedItem, tracks, t);
     if (target.kind === "refuse") return refuse("split", target.reason);
+    const onMainTrack = isMainVideoTrack(editor.getTrackById(target.element.getTrackId()));
     const result = await editor.splitElementWithCaptionCascade(target.element, t);
-    pauseAllMediaSoon();
     if (!result?.success) {
       // The rules said yes and the engine said no (a case resolveSplitTarget does not foresee):
       // still a refusal the creator hears about, never a silent no-op.
       console.error("[Timeline] split at the playhead failed", { id: target.element.getId(), t });
       return refuse("split", "split-failed");
     }
-    if (target.selectionWasTarget && result.secondElement) {
-      setSelectedItem(result.secondElement);
+    pauseAfterCut();
+    if (target.selectionWasTarget) {
+      if (onMainTrack) setSelectedItem(null);
+      else if (result.secondElement) setSelectedItem(result.secondElement);
     }
     return true;
   };
@@ -224,7 +256,11 @@ const useTimelineControl = () => {
    * After a delete before, the playhead moves to the new join (the clip's old start, where the kept
    * footage now begins) through the host's player controller (`__webcodecs_controller.seek`, which
    * does not drop a repeat seek to the same time), or `fallbackSeek` when no controller exists.
-   * After a delete after, the playhead is already on the join and does not move.
+   * After a delete after, the playhead is already on the join and does not move. Either way a cut
+   * while playing then pauses (pauseAfterCut), AFTER the seek: the controller's seek() pauses as it
+   * moves and publishes the new time before the paused state, so the playhead ends paused at the
+   * join and the pause() that follows finds it paused already. A pause() first would publish the
+   * OLD time into the live-player context, where the throttled seek time could then be dropped.
    *
    * A refusal changes nothing and says why (PLAYHEAD_CUT_REFUSED_EVENT with action "delete-before"
    * or "delete-after"), and returns false. So does a cut the engine throws on (`split-failed`),
@@ -246,11 +282,11 @@ const useTimelineControl = () => {
       return refuse(action, "split-failed");
     }
     if (range.seekTo !== null) {
-      const controller = (globalThis as { __webcodecs_controller?: { seek?: (time: number) => void } })
-        .__webcodecs_controller;
+      const controller = hostPlayerController();
       if (controller && typeof controller.seek === "function") controller.seek(range.seekTo);
       else fallbackSeek?.(range.seekTo);
     }
+    pauseAfterCut();
     return true;
   };
 

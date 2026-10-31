@@ -56,17 +56,29 @@ const ControlManager = ({
 
   // Cutting at the playhead: each key and its button run the same press (splitAtPlayhead, or
   // deleteAtPlayhead before/after), which decides from the live tracks at the moment of the press
-  // (a refusal fires the toast event). The press reads the clock through getCurrentTime(), never
-  // staler than the rendered time. Delete before moves the playhead to the new join through the
+  // (a refusal fires the toast event). Delete before moves the playhead to the new join through the
   // app's player controller when there is one, else through handleSeek (the live-player context).
+  //
+  // A press cuts at the frame the canvas shows: the host player controller's own playhead
+  // (`__webcodecs_controller.getCurrentTimeSec()`) when it has one and it is a finite number, else
+  // the live-player context's getCurrentTime(). The app feeds the context on a 50 ms throttle with
+  // no trailing update, so after quick frame steps the context can sit a frame behind the picture
+  // and the cut would land a frame early. The buttons' enabled state below keeps the context time:
+  // it only decides how a button looks, and the press re-decides at the press's own time.
+  const pressTime = (): number => {
+    const controller = (globalThis as { __webcodecs_controller?: { getCurrentTimeSec?: () => number } })
+      .__webcodecs_controller;
+    const t = typeof controller?.getCurrentTimeSec === "function" ? controller.getCurrentTimeSec() : undefined;
+    return typeof t === "number" && Number.isFinite(t) ? t : getCurrentTime();
+  };
   const splitNow = () => {
-    void splitAtPlayhead(getCurrentTime());
+    void splitAtPlayhead(pressTime());
   };
   const deleteBeforeNow = () => {
-    void deleteAtPlayhead("before", getCurrentTime(), handleSeek);
+    void deleteAtPlayhead("before", pressTime(), handleSeek);
   };
   const deleteAfterNow = () => {
-    void deleteAtPlayhead("after", getCurrentTime(), handleSeek);
+    void deleteAtPlayhead("after", pressTime(), handleSeek);
   };
 
   useCanvasKeyboard({
