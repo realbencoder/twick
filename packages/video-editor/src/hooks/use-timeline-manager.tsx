@@ -9,6 +9,8 @@ import {
   AudioElement,
   resolveIds,
   TRACK_TYPES,
+  ValidationError,
+  VALIDATION_ERROR_CODE,
 } from "@twick/timeline";
 import { useMemo } from "react";
 import { DRAG_TYPE } from "../helpers/constants";
@@ -625,14 +627,52 @@ export const useTimelineManager = (): TimelineManagerReturn => {
       return;
     }
 
+    // removeElement commits before the re-add, and timeline-view fires this drop without an await
+    // or a catch, so a re-add that throws used to lose the clip. It never leaves it removed now.
+    const homeStart = element.getStart();
+    const homeEnd = element.getEnd();
     editor.removeElement(element);
     element.setStart(updates.start);
     element.setEnd(updates.end);
-    const added = await editor.addElementToTrack(targetTrack, element);
-    if (added) {
-      setSelectedItem(element);
-      editor.refresh();
+    try {
+      if (await editor.addElementToTrack(targetTrack, element)) {
+        setSelectedItem(element);
+        editor.refresh();
+        return;
+      }
+      console.error("[Timeline] cross-row drop: the target row refused the clip; putting it back");
+    } catch (error) {
+      if (
+        error instanceof ValidationError &&
+        error.errors?.includes(VALIDATION_ERROR_CODE.COLLISION_ERROR)
+      ) {
+        // Dropped at or past the main end, the clip is pulled back to end with the video, and that
+        // span can land on a clip on this row: give it a new row there, as an overlap drop does.
+        try {
+          if (await editor.moveElementToNewTrackAt(element, dropTarget.trackIndex + 1, element.getStart())) {
+            setSelectedItem(element);
+            editor.refresh();
+            return;
+          }
+          console.error("[Timeline] cross-row drop: no new row for the clip; putting it back");
+        } catch (moveError) {
+          console.error("[Timeline] cross-row drop: no new row for the clip; putting it back:", moveError);
+        }
+      } else {
+        console.error("[Timeline] cross-row drop could not re-add the clip; putting it back:", error);
+      }
     }
+    // Back into its own slot, vacated a moment ago: no probe and no validation, so it cannot fail
+    // the same way again. One commit, so the undo stack holds the clip.
+    const home = editor.getTrackById(currentTrackId);
+    if (!home) {
+      console.error("[Timeline] cross-row drop: the clip's own row is gone; it could not be put back");
+      return;
+    }
+    element.setStart(homeStart);
+    element.setEnd(homeEnd);
+    home.createFriend().addElement(element, true);
+    editor.commitRefresh();
   };
 
   // Get timeline data from editor

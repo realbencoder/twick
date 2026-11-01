@@ -58,7 +58,9 @@ export const useEditorManager = () => {
 
     // Clamp element end to main video duration — prevents B-roll/images from
     // extending the timeline beyond the actual video length. Only when it starts INSIDE the video:
-    // at or past the end this would zero it, and ElementAdder pulls it back keeping its length.
+    // at or past the end this would zero it. ElementAdder places that case instead: a video, or an
+    // image with no preset end, is pulled back to end with the video keeping its length; anything
+    // else (audio, text, shapes, an image with a preset end) keeps today's clamp there.
     const tracks = editor.getTimelineData()?.tracks || [];
     let mainVideoEnd = 0;
     for (const t of tracks) {

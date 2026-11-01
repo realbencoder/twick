@@ -35,7 +35,8 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
    *
    * @param track - The track to add elements to
    * @param skipMetaUpdate - If true, skips video/audio metadata fetch (used for split elements that already have metadata)
-   * @param maxDuration - If set, clamps element end times to this value (prevents B-roll/images from exceeding main video duration)
+   * @param maxDuration - If set, clamps element end times to this value (prevents B-roll/images from exceeding main video duration).
+   *   A main video of 0 s or less sets no limit: clamping to it could only make 0.1 s slivers.
    *
    * @example
    * ```js
@@ -47,7 +48,7 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
     this.track = track;
     this.trackFriend = track.createFriend();
     this.skipMetaUpdate = skipMetaUpdate;
-    this.maxDuration = maxDuration;
+    this.maxDuration = maxDuration !== undefined && maxDuration > 0 ? maxDuration : undefined;
   }
 
   /**
@@ -68,7 +69,8 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
   private fitVideoToMainEnd(element: VideoElement) {
     const max = this.maxDuration;
     const length = element.getEnd() - element.getStart();
-    if (max !== undefined && max > 0 && element.getStart() >= max && length > 0) {
+    // length > 0 also rules out NaN (no end and no known source length): nothing to keep.
+    if (max !== undefined && element.getStart() >= max && length > 0) {
       element.setStart(Math.max(0, max - length));
       element.setEnd(max);
       return;
@@ -187,7 +189,7 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
       element.setEnd(element.getStart() + IMAGE_DEFAULT_SECONDS);
       // With under 4 s left before the main video ends, pull the image back so it keeps its 4 s and
       // ends with the video; on a main video shorter than 4 s it covers the whole video.
-      if (this.maxDuration !== undefined && this.maxDuration > 0 && element.getEnd() > this.maxDuration) {
+      if (this.maxDuration !== undefined && element.getEnd() > this.maxDuration) {
         element.setStart(Math.max(0, this.maxDuration - IMAGE_DEFAULT_SECONDS));
         element.setEnd(this.maxDuration);
       }

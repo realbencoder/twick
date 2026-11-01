@@ -29,6 +29,9 @@ import {
 import { ValidationError } from "../visitor/element-validator";
 import Watermark from "../addOns/watermark";
 
+/** The magnetic main video track's name (the same identity rippleRemoveElement and closeVideoTrackGaps default to). */
+const MAIN_VIDEO_TRACK_NAME = "Video";
+
 /** Event names emitted by TimelineEditor after mutations */
 export type TimelineEditorEvent =
   | "element:added"
@@ -435,15 +438,18 @@ export class TimelineEditor {
       throw new Error("TRACK_NOT_FOUND");
     }
     try {
-      // Find the main video track's end time to clamp overlay elements
+      // Find the main video track's end time to clamp overlay elements. The main video is the
+      // track NAMED "Video" (video-editor's isMainVideoTrack rule), never just the first
+      // VIDEO-typed track: a cross-row overlap drop inserts a VIDEO-typed "Video Track" overlay
+      // ABOVE main, and its clip's end then capped every later add. The first VIDEO-typed track is
+      // only the fallback for a host with no "Video" track.
       let maxDuration: number | undefined;
       if (track.getType() !== TRACK_TYPES.VIDEO) {
-        const videoTracks = this.getTracksByType(TRACK_TYPES.VIDEO);
-        if (videoTracks.length > 0) {
-          const videoElements = videoTracks[0].getElements();
-          if (videoElements.length > 0) {
-            maxDuration = Math.max(...videoElements.map(el => el.getEnd()));
-          }
+        const mainTrack =
+          this.getTrackByName(MAIN_VIDEO_TRACK_NAME) ?? this.getTracksByType(TRACK_TYPES.VIDEO)[0];
+        const videoElements = mainTrack?.getElements() ?? [];
+        if (videoElements.length > 0) {
+          maxDuration = Math.max(...videoElements.map(el => el.getEnd()));
         }
       }
 
