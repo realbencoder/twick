@@ -160,6 +160,11 @@ export {
   MAX_MINORS,
 } from "./helpers/ruler-ticks";
 export type { TickInterval, TickRange } from "./helpers/ruler-ticks";
+// Adding a picked part of a video, and keeping a preset length at the playhead. Exported so the
+// studio's add paths build elements the same way, and FOR TESTING: the app suite executes them and
+// useEditorManager().addElement against the shipped dist (tests/unit/media-add-placement-dist.test.tsx).
+export { applyMediaRange, placeKeepingLength } from "./helpers/media-range";
+export type { PickedMediaRange } from "./helpers/media-range";
 // SeekTrack (the ruler) is exported FOR TESTING, not for host use — mount it via VideoEditor.
 //
 // Three separate reviews of this component found the same hole: the tick DECISIONS are pure and

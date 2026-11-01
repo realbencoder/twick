@@ -8,6 +8,7 @@ import {
   ValidationError,
 } from "@twick/timeline";
 import { useEffect, useRef } from "react";
+import { placeKeepingLength } from "../helpers/media-range";
 
 /**
  * Custom hook for managing video editor operations.
@@ -51,10 +52,13 @@ export const useEditorManager = () => {
    */
   const addElement = async (element: TrackElement) => {
     const currentTime = getCurrentTime();
-    element.setStart(currentTime);
+    // Move to the playhead KEEPING a preset length (a picked B-roll range, a shape's 5 s). A bare
+    // setStart left the preset end where it was, so the clip came out shorter or inverted.
+    placeKeepingLength(element, currentTime);
 
     // Clamp element end to main video duration — prevents B-roll/images from
-    // extending the timeline beyond the actual video length
+    // extending the timeline beyond the actual video length. Only when it starts INSIDE the video:
+    // at or past the end this would zero it, and ElementAdder pulls it back keeping its length.
     const tracks = editor.getTimelineData()?.tracks || [];
     let mainVideoEnd = 0;
     for (const t of tracks) {
@@ -64,7 +68,7 @@ export const useEditorManager = () => {
         }
       }
     }
-    if (mainVideoEnd > 0 && element.getEnd() > mainVideoEnd) {
+    if (mainVideoEnd > 0 && element.getStart() < mainVideoEnd && element.getEnd() > mainVideoEnd) {
       element.setEnd(mainVideoEnd);
     }
 

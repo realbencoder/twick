@@ -14,6 +14,9 @@ import { EffectElement } from "../elements/effect.element";
 import { Track } from "../track/track";
 import { TrackFriend } from "../track/track.friend";
 
+/** How long an image lands for when nothing preset its end, in seconds. */
+const IMAGE_DEFAULT_SECONDS = 4;
+
 /**
  * ElementAdder visitor for adding elements to tracks.
  * Uses the visitor pattern to handle different element types
@@ -58,6 +61,22 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
   }
 
   /**
+   * Keeps a video inside the main video. Starting at or past the main end (the playhead parked
+   * there after playback), it is pulled back so it keeps its length and ends with the video, instead
+   * of clampEnd's 0.1 s sliver past the end. Otherwise clampEnd cuts the end at the main end.
+   */
+  private fitVideoToMainEnd(element: VideoElement) {
+    const max = this.maxDuration;
+    const length = element.getEnd() - element.getStart();
+    if (max !== undefined && max > 0 && element.getStart() >= max && length > 0) {
+      element.setStart(Math.max(0, max - length));
+      element.setEnd(max);
+      return;
+    }
+    this.clampEnd(element);
+  }
+
+  /**
    * Adds a video element to the track.
    * Updates video metadata and calculates appropriate start/end times
    * based on existing track elements.
@@ -90,10 +109,22 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
     if (isNaN(element.getStart())) {
       element.setStart(lastEndtime);
     }
+    // The source left after the in-point (props.time), in timeline seconds. A clip may never run
+    // past it: an in-point plus the whole source length froze on the last frame.
+    const rate = element.getPlaybackRate() > 0 ? element.getPlaybackRate() : 1;
+    const sourceLeft = (element.getMediaDuration() - element.getStartAt()) / rate;
     if (isNaN(element.getEnd())) {
-      element.setEnd(element.getStart() + element.getMediaDuration());
+      element.setEnd(element.getStart() + sourceLeft);
+    } else if (
+      !this.skipMetaUpdate &&
+      sourceLeft > 0 &&
+      element.getEnd() - element.getStart() > sourceLeft
+    ) {
+      // A preset end (a picked range) past the source is cut to it, on a FRESH probe only: split
+      // and rollback halves (skipMetaUpdate) keep the times the cloner gave them.
+      element.setEnd(element.getStart() + sourceLeft);
     }
-    this.clampEnd(element);
+    this.fitVideoToMainEnd(element);
 
     return this.trackFriend.addElement(element);
   }
@@ -153,7 +184,13 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
       element.setStart(lastEndtime);
     }
     if (isNaN(element.getEnd())) {
-      element.setEnd(element.getStart() + 1);
+      element.setEnd(element.getStart() + IMAGE_DEFAULT_SECONDS);
+      // With under 4 s left before the main video ends, pull the image back so it keeps its 4 s and
+      // ends with the video; on a main video shorter than 4 s it covers the whole video.
+      if (this.maxDuration !== undefined && this.maxDuration > 0 && element.getEnd() > this.maxDuration) {
+        element.setStart(Math.max(0, this.maxDuration - IMAGE_DEFAULT_SECONDS));
+        element.setEnd(this.maxDuration);
+      }
     }
     this.clampEnd(element);
 
