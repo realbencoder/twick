@@ -16,7 +16,8 @@ function shouldIgnoreKeydown(e: KeyboardEvent): boolean {
 
 /**
  * Where the creator's attention is on something else: a native select (the inspector has several),
- * a listbox, menu or combobox, or a dialog (modal or not: popovers are role="dialog" too).
+ * a listbox, menu or combobox, or a dialog (modal or not: popovers are role="dialog" too). A CLOSED
+ * dropdown is the exception for the cut keys only (see isClosedDropdown).
  */
 const FOCUS_ELSEWHERE_SELECTOR = [
   "select",
@@ -32,13 +33,61 @@ const FOCUS_ELSEWHERE_SELECTOR = [
 /**
  * Focus is on or inside one of FOCUS_ELSEWHERE_SELECTOR. The timeline EDIT keys (S, Cmd/Ctrl+B,
  * Q, W, Delete, Backspace) then do nothing: S, Q and W act with nothing selected, so a bare s/q/w
- * meant for a select's typeahead or a menu cut the video, and behind a modal the cut happened
- * unseen and was autosaved. Undo and redo still work there, as before: changing an inspector
- * dropdown (focus stays on the select) and pressing Cmd+Z must still undo it.
+ * meant for an open list or a menu cut the video, and behind a modal the cut happened unseen and
+ * was autosaved. (A CLOSED dropdown hands S, Cmd/Ctrl+B, Q and W to the editor first: see
+ * isClosedDropdown.) Undo and redo still work there, as before: changing an inspector dropdown
+ * (focus stays on the select) and pressing Cmd+Z must still undo it.
  */
 function isFocusElsewhere(): boolean {
   return !!document.activeElement?.closest(FOCUS_ELSEWHERE_SELECTOR);
 }
+
+/**
+ * A dropdown that has focus but is CLOSED, the state a pick with the mouse leaves behind (Chrome
+ * keeps focus on a native select after a pick; Radix Select returns it to its trigger):
+ * - a native single select whose list is not showing. Chromium reports a showing list as `:open`,
+ *   and where it draws the list in the page it DOES send the page keydowns while it shows (the
+ *   headless shell, checked 2026-11-01), so an open one is never claimed. A browser without `:open`
+ *   cannot tell, so its select is left alone, as before.
+ *   A list-box select (`multiple`, or `size` above 1) is always showing.
+ * - a combobox (a Radix Select trigger) with `aria-expanded="false"`. An open Radix Select moves
+ *   focus into its listbox, so the trigger only has focus while closed.
+ * Not inside any other FOCUS_ELSEWHERE_SELECTOR container (a dropdown in a dialog stays the dialog's).
+ * Text entry (an autocomplete input) never gets here: shouldIgnoreKeydown already passed it on.
+ */
+function isClosedDropdown(el: Element): boolean {
+  if (el.parentElement?.closest(FOCUS_ELSEWHERE_SELECTOR)) return false;
+  if (el.tagName === "SELECT") {
+    const select = el as HTMLSelectElement;
+    if (select.multiple || select.size > 1) return false;
+    try {
+      return !select.matches(":open");
+    } catch {
+      return false;
+    }
+  }
+  return el.matches('[role="combobox"][aria-expanded="false"]');
+}
+
+/** The cut a key asks for, or null: the one mapping both keydown listeners use. */
+type CutKey = "split" | "delete-before" | "delete-after";
+function cutKeyOf(e: KeyboardEvent): CutKey | null {
+  const key = e.key.toLowerCase();
+  if (e.metaKey || e.ctrlKey) return key === "b" && !e.shiftKey ? "split" : null; // Cmd/Ctrl+B
+  if (key === "s") return "split";
+  if (e.altKey || e.shiftKey) return null; // Q and W take no modifier at all
+  if (key === "q") return "delete-before";
+  if (key === "w") return "delete-after";
+  return null;
+}
+
+/**
+ * A press on a control the creator cannot use right now (a greyed-out cut button, which the host
+ * makes hoverable for its tooltip, or its icon): it does nothing, so it never changes where
+ * Delete/Backspace go. Chrome fires pointerdown there but leaves a transcript word selection on
+ * screen, and the next Backspace deleted a timeline clip selected earlier.
+ */
+const DISABLED_CONTROL_SELECTOR = 'button:disabled, [aria-disabled="true"], .btn-disabled';
 
 /**
  * The host app's side panels whose own words a creator selects: the transcript
@@ -100,12 +149,19 @@ function isDeleteForTextPanel(lastPress: LastPress): boolean {
  * toast per repeat. Undo and redo still repeat while held.
  * Every key is ignored when a focused control already handled it (`defaultPrevented`), or while
  * focus is in an input, textarea or contenteditable. The edit keys (all but undo and redo) are
- * also ignored while focus is in a select, listbox, menu, combobox or dialog (isFocusElsewhere).
+ * also ignored while focus is in a select, listbox, menu, combobox or dialog (isFocusElsewhere),
+ * with one exception (Ben, 2026-11-01: "Editor keys win"): on a CLOSED dropdown (isClosedDropdown)
+ * S, Cmd/Ctrl+B, Q and W are the editor's. A capture-phase keydown listener on document claims
+ * exactly those keys there (preventDefault, then the cut) BEFORE the dropdown sees them: Chrome's
+ * type-ahead on a closed native select runs as the key's default action, and Radix Select's on its
+ * trigger runs in React's root listener, ahead of any bubble listener on document; Radix skips it
+ * for a keydown already defaultPrevented. Propagation is never stopped. Every other key there
+ * (Delete and Backspace included) is left to the dropdown, as before.
  * Delete and Backspace are also ignored while the creator works in the transcript or Subtitles
  * panel: focus there (not on a button), or a drag-selection there after the last pointerdown
  * landed there, and never once the last pointerdown landed outside both (see isDeleteForTextPanel;
- * a capture-phase pointerdown listener on document records where the last one landed). S, Q and W
- * keep working in the panels.
+ * a capture-phase pointerdown listener on document records where the last one landed, and a press
+ * on a disabled control does not count). S, Q and W keep working in the panels.
  */
 export function useCanvasKeyboard({
   onDelete,
@@ -133,7 +189,27 @@ export function useCanvasKeyboard({
 
     // Capture phase, so a panel or clip that stops propagation still tells us where it landed.
     const handlePointerDown = (e: PointerEvent) => {
-      lastPressRef.current = isInTextPanel(e.target as Node | null) ? "panel" : "elsewhere";
+      const target = e.target as Node | null;
+      const el = !target ? null : target.nodeType === 1 ? (target as Element) : target.parentElement;
+      if (el?.closest(DISABLED_CONTROL_SELECTOR)) return; // a press that did nothing
+      lastPressRef.current = isInTextPanel(target) ? "panel" : "elsewhere";
+    };
+
+    const runCut = (cut: CutKey) => {
+      if (cut === "split") onSplit?.();
+      else if (cut === "delete-before") onDeleteBefore?.();
+      else onDeleteAfter?.();
+    };
+
+    // Capture phase: a cut key on a CLOSED dropdown is claimed before the dropdown's own
+    // type-ahead can take it. Only these keys, only that target; never stops propagation.
+    const handleKeyDownCapture = (e: KeyboardEvent) => {
+      if (shouldIgnoreKeydown(e)) return;
+      const cut = cutKeyOf(e);
+      const active = document.activeElement;
+      if (!cut || !active || !isClosedDropdown(active)) return;
+      e.preventDefault();
+      if (!e.repeat) runCut(cut);
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -161,31 +237,17 @@ export function useCanvasKeyboard({
       }
 
       // Every key below edits the timeline: never from a select, menu or dialog. Not claimed, so
-      // the focused control keeps the key (a select's typeahead, a menu's own keys).
+      // the focused control keeps the key (a select's typeahead, a menu's own keys). A cut key on a
+      // closed dropdown never gets here: the capture listener above claimed it.
       if (isFocusElsewhere()) return;
 
-      if (hasPrimaryModifier) {
-        // Split: Cmd/Ctrl+B (CapCut convention). Claimed even when repeating, acted on once.
-        if (key === "b" && !e.shiftKey) {
-          e.preventDefault();
-          if (!e.repeat) onSplit?.();
-          return;
-        }
-      }
-
-      // Split: S (single key, no modifier: fast split). Claimed even when repeating, acted on once.
-      if (!hasPrimaryModifier && key === "s") {
+      // Split: S (single key, no modifier: fast split) or Cmd/Ctrl+B (CapCut convention). Delete
+      // before / after the playhead: Q / W with no modifier at all. Claimed even when repeating,
+      // acted on once.
+      const cut = cutKeyOf(e);
+      if (cut) {
         e.preventDefault();
-        if (!e.repeat) onSplit?.();
-        return;
-      }
-
-      // Delete before / after the playhead: Q / W with no modifier at all.
-      if (!hasPrimaryModifier && !e.altKey && !e.shiftKey && (key === "q" || key === "w")) {
-        e.preventDefault();
-        if (e.repeat) return;
-        if (key === "q") onDeleteBefore?.();
-        else onDeleteAfter?.();
+        if (!e.repeat) runCut(cut);
         return;
       }
 
@@ -198,9 +260,11 @@ export function useCanvasKeyboard({
     };
 
     document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDownCapture, true);
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDownCapture, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [enabled, onDelete, onUndo, onRedo, onSplit, onDeleteBefore, onDeleteAfter]);

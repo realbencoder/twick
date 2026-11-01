@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import {
   TrackElement,
   Track,
@@ -81,6 +82,14 @@ const refuse = (action: PlayheadCutAction, reason: PlayheadCutRefusal): false =>
  */
 const useTimelineControl = () => {
   const { editor, setSelectedItem, selectedIds, selectedItem } = useTimelineContext();
+
+  // True while a splitAtPlayhead or deleteAtPlayhead is still finishing. An image split waits for
+  // the image to load (ElementAdder always loads an image's size), and the engine has already taken
+  // the original off the live track: a second S then cut the main video and recorded an undo entry
+  // without the image, and a Q or W in that window lost the image for good. Further presses are
+  // ignored until it settles (return false at once, nothing changed, nothing dispatched), the way
+  // a held key's auto-repeat is. A ref: read only inside the presses, never rendered (rule #9).
+  const cutInFlightRef = useRef(false);
 
   /**
    * Deletes selected item(s) from the timeline.
@@ -201,9 +210,10 @@ const useTimelineControl = () => {
 
   /**
    * Split at the playhead without clicking a clip first (S, Cmd/Ctrl+B, the Scissors button).
-   * The target is the selected clip when the playhead is inside it, otherwise the MAIN video clip
-   * under the playhead (resolveSplitTarget decides; B-roll, music and overlays the creator did not
-   * select are never cut). Subtitles over a main clip split with it, in the same single undo entry.
+   * The target is the selected clip when the playhead is on it (its edges included, where it
+   * refuses), otherwise the MAIN video clip under the playhead (resolveSplitTarget decides; B-roll,
+   * music and overlays the creator did not select are never cut). Subtitles over a main clip split
+   * with it, in the same single undo entry.
    *
    * A refusal changes nothing and says why: it fires PLAYHEAD_CUT_REFUSED_EVENT on window with
    * `{ action: "split", reason, message }` for the host to show, and returns false. That includes
@@ -211,11 +221,14 @@ const useTimelineControl = () => {
    *
    * A successful split while playing pauses there (pauseAfterCut).
    *
+   * While a split or delete at the playhead is still finishing, another press returns false at
+   * once and changes nothing (cutInFlightRef).
+   *
    * Selection afterwards (both pieces are NEW ids: ElementSplitter clones the clip twice, so the
    * original id never survives a split):
    * - a selected B-roll, subtitle or text the split cut: its right piece is selected (the playhead
    *   sits at its start), so the next S further on keeps cutting that clip instead of falling back
-   *   to the main video;
+   *   to the main video, and a second S right there refuses (near-edge);
    * - a selected MAIN video clip the split cut: nothing is selected (Ben, 2026-10-30: "Leave it
    *   alone"). Selecting the right piece, a new id, made the host's side panel follow it and
    *   unmounted the transcript on every S in the "click a word, press S" flow; the cleared
@@ -224,23 +237,29 @@ const useTimelineControl = () => {
    * - the main clip cut with something else or nothing selected: the selection is left as it was.
    */
   const splitAtPlayhead = async (t: number): Promise<boolean> => {
-    const tracks = editor.getTimelineData()?.tracks ?? [];
-    const target = resolveSplitTarget(selectedItem, tracks, t);
-    if (target.kind === "refuse") return refuse("split", target.reason);
-    const onMainTrack = isMainVideoTrack(editor.getTrackById(target.element.getTrackId()));
-    const result = await editor.splitElementWithCaptionCascade(target.element, t);
-    if (!result?.success) {
-      // The rules said yes and the engine said no (a case resolveSplitTarget does not foresee):
-      // still a refusal the creator hears about, never a silent no-op.
-      console.error("[Timeline] split at the playhead failed", { id: target.element.getId(), t });
-      return refuse("split", "split-failed");
+    if (cutInFlightRef.current) return false;
+    cutInFlightRef.current = true;
+    try {
+      const tracks = editor.getTimelineData()?.tracks ?? [];
+      const target = resolveSplitTarget(selectedItem, tracks, t);
+      if (target.kind === "refuse") return refuse("split", target.reason);
+      const onMainTrack = isMainVideoTrack(editor.getTrackById(target.element.getTrackId()));
+      const result = await editor.splitElementWithCaptionCascade(target.element, t);
+      if (!result?.success) {
+        // The rules said yes and the engine said no (a case resolveSplitTarget does not foresee):
+        // still a refusal the creator hears about, never a silent no-op.
+        console.error("[Timeline] split at the playhead failed", { id: target.element.getId(), t });
+        return refuse("split", "split-failed");
+      }
+      pauseAfterCut();
+      if (target.selectionWasTarget) {
+        if (onMainTrack) setSelectedItem(null);
+        else if (result.secondElement) setSelectedItem(result.secondElement);
+      }
+      return true;
+    } finally {
+      cutInFlightRef.current = false;
     }
-    pauseAfterCut();
-    if (target.selectionWasTarget) {
-      if (onMainTrack) setSelectedItem(null);
-      else if (result.secondElement) setSelectedItem(result.secondElement);
-    }
-    return true;
   };
 
   /**
@@ -265,29 +284,36 @@ const useTimelineControl = () => {
    * A refusal changes nothing and says why (PLAYHEAD_CUT_REFUSED_EVENT with action "delete-before"
    * or "delete-after"), and returns false. So does a cut the engine throws on (`split-failed`),
    * which is also logged: rippleDeleteRanges cuts a clone and commits once at its end, so a throw
-   * before that commit leaves the timeline as it was.
+   * before that commit leaves the timeline as it was. Ignored while another cut at the playhead is
+   * still finishing (cutInFlightRef).
    */
   const deleteAtPlayhead = async (
     side: "before" | "after",
     t: number,
     fallbackSeek?: (time: number) => void
   ): Promise<boolean> => {
-    const action: PlayheadCutAction = side === "before" ? "delete-before" : "delete-after";
-    const range = resolveDeleteRange(editor.getTimelineData()?.tracks ?? [], t, side);
-    if (range.kind === "refuse") return refuse(action, range.reason);
+    if (cutInFlightRef.current) return false;
+    cutInFlightRef.current = true;
     try {
-      await editor.rippleDeleteRanges([[range.from, range.to]]);
-    } catch (error) {
-      console.error("[Timeline] delete at the playhead failed", { side, t, error });
-      return refuse(action, "split-failed");
+      const action: PlayheadCutAction = side === "before" ? "delete-before" : "delete-after";
+      const range = resolveDeleteRange(editor.getTimelineData()?.tracks ?? [], t, side);
+      if (range.kind === "refuse") return refuse(action, range.reason);
+      try {
+        await editor.rippleDeleteRanges([[range.from, range.to]]);
+      } catch (error) {
+        console.error("[Timeline] delete at the playhead failed", { side, t, error });
+        return refuse(action, "split-failed");
+      }
+      if (range.seekTo !== null) {
+        const controller = hostPlayerController();
+        if (controller && typeof controller.seek === "function") controller.seek(range.seekTo);
+        else fallbackSeek?.(range.seekTo);
+      }
+      pauseAfterCut();
+      return true;
+    } finally {
+      cutInFlightRef.current = false;
     }
-    if (range.seekTo !== null) {
-      const controller = hostPlayerController();
-      if (controller && typeof controller.seek === "function") controller.seek(range.seekTo);
-      else fallbackSeek?.(range.seekTo);
-    }
-    pauseAfterCut();
-    return true;
   };
 
   /**
