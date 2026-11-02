@@ -25,6 +25,7 @@ import {
   startReclaimAffordance,
   startReclaimGrow,
 } from "../../helpers/seam-give-back";
+import { narrowClipHitZones } from "../../helpers/narrow-clip";
 import { drawClipWaveform, getTimelineWaveform } from "../../helpers/waveform-render";
 import { drawClipFilmstrip, getFilmstripMeta } from "../../helpers/filmstrip-render";
 import {
@@ -988,6 +989,27 @@ export const TrackElementView = memo(({
     locked,
   });
 
+  // NARROW SELECTED OVERLAY CLIPS STAY DRAGGABLE (helpers/narrow-clip.ts). Under 48 px the two
+  // handles' hit zones covered the whole clip and the move gesture bails on any handle, so the clip
+  // could not be moved. There, each handle stops taking presses (inline pointerEvents "none" also
+  // disables its ::before) and an outward-only hit child takes them instead; presses on the child
+  // bubble to bindStartHandle/bindEndHandle and `closest(".twick-track-element-handle")` still keeps
+  // them out of the move. Inline, like the give-back band: no studio.css change.
+  // Decided from the clip as it was when a TRIM began, not its live width: re-deciding mid-trim at
+  // 48 px would unmount the hit child holding the pointer (a narrow clip dragged wider) or take
+  // presses away from the handle being dragged (a wide one dragged narrower).
+  const trimInFlight = dragType.current === DRAG_TYPE.START || dragType.current === DRAG_TYPE.END;
+  const zoneSpan = trimInFlight ? { start: element.getStart(), end: element.getEnd() } : shown;
+  const narrow =
+    hasHandles
+      ? narrowClipHitZones({
+          widthPx: ((zoneSpan.end - zoneSpan.start) / duration) * parentWidth,
+          leftPx: (zoneSpan.start / duration) * parentWidth,
+          isMainVideoTrack,
+          elementType: element.getType(),
+        })
+      : null;
+
   const motionProps: HTMLMotionProps<"div"> = {
     ref,
     className: `twick-track-element ${
@@ -1122,13 +1144,36 @@ export const TrackElementView = memo(({
         ) : null}
         {hasHandles ? (
           <div
-            style={{ touchAction: "none" , zIndex: isSelected? 100 : 1}}
+            style={{
+              touchAction: "none",
+              zIndex: isSelected ? 100 : 1,
+              ...(narrow ? { pointerEvents: "none" as const } : {}),
+            }}
             {...bindStartHandle()}
             title={startReclaimTitle}
             className={`twick-track-element-handle twick-track-element-handle-start${
               canReclaimStart ? " twick-track-element-handle-reclaim" : ""
             }`}
-          />
+          >
+            {narrow ? (
+              // Anchored on the handle centre (which the hover width change keeps), reaching LEFT by
+              // today's full outer reach and into the clip only by the left-edge inner grab. Carries
+              // the handle's tooltip, since the handle itself no longer takes the hover.
+              <div
+                data-twick-narrow-hit="start"
+                title={startReclaimTitle}
+                style={{
+                  position: "absolute",
+                  top: -4,
+                  bottom: -4,
+                  left: `calc(50% - ${narrow.reachPx}px)`,
+                  width: `${narrow.reachPx + narrow.startInnerPx}px`,
+                  pointerEvents: "auto",
+                  cursor: "ew-resize",
+                }}
+              />
+            ) : null}
+          </div>
         ) : null}
         {showAudioBadge ? (
           <div
@@ -1191,13 +1236,34 @@ export const TrackElementView = memo(({
         ) : null}
         {hasHandles ? (
           <div
-            style={{ touchAction: "none", zIndex: isSelected? 100 : 1 }}
+            style={{
+              touchAction: "none",
+              zIndex: isSelected ? 100 : 1,
+              ...(narrow ? { pointerEvents: "none" as const } : {}),
+            }}
             {...bindEndHandle()}
             title={reclaimTitle}
             className={`twick-track-element-handle twick-track-element-handle-end${
               canReclaim ? " twick-track-element-handle-reclaim" : ""
             }`}
-          />
+          >
+            {narrow ? (
+              // The mirror of the start zone: from the handle centre RIGHT by the full outer reach.
+              <div
+                data-twick-narrow-hit="end"
+                title={reclaimTitle}
+                style={{
+                  position: "absolute",
+                  top: -4,
+                  bottom: -4,
+                  left: `calc(50% - ${narrow.endInnerPx}px)`,
+                  width: `${narrow.reachPx + narrow.endInnerPx}px`,
+                  pointerEvents: "auto",
+                  cursor: "ew-resize",
+                }}
+              />
+            ) : null}
+          </div>
         ) : null}
         {(element as any).getFrameEffects
           ? (element as any)

@@ -197,6 +197,10 @@ export { default as SeekTrack } from "./components/track/seek-track";
 // decisions that a regex over the bundle cannot tell apart from their mutations. It takes plain
 // props and no context. See tests/unit/track-element-give-back-render.test.tsx in the app.
 export { TrackElementView } from "./components/track/track-element";
+// The narrow-clip hit zones it draws (helpers/narrow-clip.ts), FOR TESTING too: which clips get
+// outward-only trim zones and their left-edge inner grab. See
+// tests/unit/track-element-narrow-clip-render.test.tsx in the app.
+export { narrowClipHitZones, NARROW_CLIP_PX } from "./helpers/narrow-clip";
 // useTimelineManager too: what a trim or give-back COMMITS (the tail clamp, the "lands where it was"
 // no-op, the in-point write, eye contact on restored footage) is decided in its onElementDrag, and a
 // regex over the bundle cannot tell those apart from their mutations either. It needs only the
