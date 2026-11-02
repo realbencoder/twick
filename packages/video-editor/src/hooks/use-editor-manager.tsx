@@ -1,5 +1,6 @@
 import { useLivePlayerContext } from "@twick/live-player";
 import {
+  TIMELINE_ELEMENT_TYPE,
   Track,
   TRACK_TYPES,
   TrackElement,
@@ -39,13 +40,31 @@ const mainVideoEndOf = (tracks: Track[]): number => {
   return end;
 };
 
+const isVisualElement = (element: TrackElement): boolean => {
+  const type = String(element.getType?.() ?? "").toLowerCase();
+  return type === TIMELINE_ELEMENT_TYPE.VIDEO || type === TIMELINE_ELEMENT_TYPE.IMAGE;
+};
+
 /**
- * Whether + may add onto the track the creator selected by its header. Never the main "Video"
- * track (its clips are the recording, concatenated by the export) and never a caption track (it
- * holds subtitles only): those adds go to a new overlay row, as with nothing selected.
+ * A music row: an AUDIO-typed track (a cross-row move of an audio clip makes one), or a row holding
+ * an audio clip. The Audio panel's + puts its clip on a new ELEMENT-typed row, so a creator's
+ * music row is usually not AUDIO-typed.
  */
-const takesAddsFromHeader = (track: Track): boolean =>
-  !isMainVideoTrack(track) && track.getType() !== TRACK_TYPES.CAPTION;
+const isMusicRow = (track: Track): boolean =>
+  track.getType() === TRACK_TYPES.AUDIO ||
+  track.getElements().some((el) => String(el.getType?.() ?? "").toLowerCase() === TIMELINE_ELEMENT_TYPE.AUDIO);
+
+/**
+ * Whether + may add this element onto the track the creator selected by its header (founder,
+ * 2026-11-02: + always adds as its own layer). Never the main "Video" track (its clips are the
+ * recording, concatenated by the export), never a caption track (it holds subtitles only), and
+ * never an image or video onto a music row: those adds go to a new overlay row, as with nothing
+ * selected. A B-roll or image row still takes the add, and music still goes onto a music row.
+ */
+const takesAddsFromHeader = (track: Track, element: TrackElement): boolean =>
+  !isMainVideoTrack(track) &&
+  track.getType() !== TRACK_TYPES.CAPTION &&
+  !(isVisualElement(element) && isMusicRow(track));
 
 /**
  * Custom hook for managing video editor operations.
@@ -137,7 +156,7 @@ export const useEditorManager = () => {
     // track the creator made or selected).
     let createdTrack: Track | null = null;
     try {
-      if (selectedItem instanceof Track && takesAddsFromHeader(selectedItem)) {
+      if (selectedItem instanceof Track && takesAddsFromHeader(selectedItem, element)) {
         const result = await editor.addElementToTrack(selectedItem, element);
         if (result) {
           setSelectedItem(element);
