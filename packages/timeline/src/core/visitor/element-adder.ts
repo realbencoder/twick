@@ -16,6 +16,8 @@ import { TrackFriend } from "../track/track.friend";
 
 /** How long an image lands for when nothing preset its end, in seconds. */
 const IMAGE_DEFAULT_SECONDS = 4;
+/** The shortest element clampEnd leaves, in seconds: its floor is `start + MIN_CLAMPED_SECONDS`. */
+const MIN_CLAMPED_SECONDS = 0.1;
 
 /**
  * ElementAdder visitor for adding elements to tracks.
@@ -57,20 +59,21 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
    */
   private clampEnd(element: { getStart: () => number; getEnd: () => number; setEnd: (v: number) => void }) {
     if (this.maxDuration !== undefined && element.getEnd() > this.maxDuration) {
-      element.setEnd(Math.max(element.getStart() + 0.1, this.maxDuration));
+      element.setEnd(Math.max(element.getStart() + MIN_CLAMPED_SECONDS, this.maxDuration));
     }
   }
 
   /**
-   * Keeps a video inside the main video. Starting at or past the main end (the playhead parked
-   * there after playback), it is pulled back so it keeps its length and ends with the video, instead
-   * of clampEnd's 0.1 s sliver past the end. Otherwise clampEnd cuts the end at the main end.
+   * Keeps a video inside the main video. Starting at, past, or less than 0.1 s before the main end
+   * (the playhead parked there after playback), it is pulled back so it keeps its length and ends
+   * with the video: clampEnd's 0.1 s floor would put it PAST the end there ([9.95, 10.05] on a 10 s
+   * main video). Otherwise clampEnd cuts the end at the main end.
    */
   private fitVideoToMainEnd(element: VideoElement) {
     const max = this.maxDuration;
     const length = element.getEnd() - element.getStart();
     // length > 0 also rules out NaN (no end and no known source length): nothing to keep.
-    if (max !== undefined && element.getStart() >= max && length > 0) {
+    if (max !== undefined && element.getStart() > max - MIN_CLAMPED_SECONDS && length > 0) {
       element.setStart(Math.max(0, max - length));
       element.setEnd(max);
       return;

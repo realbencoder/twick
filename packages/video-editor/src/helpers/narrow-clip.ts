@@ -8,9 +8,12 @@ import { TIMELINE_ELEMENT_TYPE } from "@twick/timeline";
  * about 26 px or narrower therefore had no body left to grab, and the move gesture bails on any
  * press inside a handle: the clip could be trimmed but never moved.
  *
- * Under NARROW_CLIP_PX of rendered width, each handle's hit zone reaches OUTWARD only, and the
- * middle of the clip moves it. 48 px is where an 8 px inner grab per side still leaves 32 px of
- * body. Wider clips keep today's handles exactly.
+ * Under NARROW_CLIP_PX of rendered width, each handle's hit zone reaches OUTWARD from the handle's
+ * centre, and the middle of the clip moves it. The start handle's centre is the clip's left edge;
+ * the end handle's sits 4 px INSIDE the right edge (timeline.css: `right: -2px`, translate(-50%),
+ * 6 px wide), so the end zone still covers the clip's last 4 px. 48 px is where an 8 px inner grab
+ * per side still leaves 32 px of body. A clip of about 8 px or less still has almost no body to
+ * grab. Wider clips keep today's handles exactly.
  *
  * Overlay tracks only (B-roll, image, text, audio, Cutaways):
  *  - never the main "Video" track, where a body drag is the reorder lift and the give-back handles
@@ -29,7 +32,10 @@ export interface NarrowHitZones {
   reachPx: number;
   /** How far the START zone reaches INTO the clip, from the handle centre. */
   startInnerPx: number;
-  /** How far the END zone reaches INTO the clip, from the handle centre. Always 0 today. */
+  /**
+   * How far the END zone reaches further INTO the clip, past the handle centre. Always 0 today, but
+   * that centre already sits 4 px inside the clip, so the zone covers the clip's last 4 px.
+   */
   endInnerPx: number;
 }
 

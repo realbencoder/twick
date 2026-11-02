@@ -11,6 +11,12 @@ import { useEffect, useRef } from "react";
 import { placeKeepingLength } from "../helpers/media-range";
 
 /**
+ * Within this many seconds of the main end, ElementAdder pulls a video back to end with the video
+ * (its fitVideoToMainEnd: clampEnd's 0.1 s floor would otherwise put it past the end).
+ */
+const MAIN_END_PULL_BACK_SECONDS = 0.1;
+
+/**
  * Custom hook for managing video editor operations.
  * Provides functionality to add and update timeline elements with automatic
  * collision detection and error handling. Integrates with live player context
@@ -81,7 +87,9 @@ export const useEditorManager = () => {
     // extending the timeline beyond the actual video length. Only when it starts INSIDE the video:
     // at or past the end this would zero it. ElementAdder places that case instead: a video, or an
     // image with no preset end, is pulled back to end with the video keeping its length; anything
-    // else (audio, text, shapes, an image with a preset end) keeps today's clamp there.
+    // else (audio, text, shapes, an image with a preset end) keeps today's clamp there. A VIDEO
+    // starting less than 0.1 s before the end is left to ElementAdder too: cut here, it became a
+    // sub-0.1 s sliver that the pull-back then kept (the length it keeps is the one it is handed).
     const tracks = editor.getTimelineData()?.tracks || [];
     let mainVideoEnd = 0;
     for (const t of tracks) {
@@ -91,7 +99,14 @@ export const useEditorManager = () => {
         }
       }
     }
-    if (mainVideoEnd > 0 && element.getStart() < mainVideoEnd && element.getEnd() > mainVideoEnd) {
+    const videoAtTheEnd =
+      element.getType?.() === 'video' && element.getStart() > mainVideoEnd - MAIN_END_PULL_BACK_SECONDS;
+    if (
+      mainVideoEnd > 0 &&
+      element.getStart() < mainVideoEnd &&
+      element.getEnd() > mainVideoEnd &&
+      !videoAtTheEnd
+    ) {
       element.setEnd(mainVideoEnd);
     }
 

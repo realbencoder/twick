@@ -46,6 +46,12 @@ import "../../styles/timeline.css";
 // (If a project ever loads hundreds of distinct large sources, wrap this in a bounded LRU.)
 const THUMB_CACHE = new Map<string, string>();
 
+/**
+ * A narrow clip's trim handle (helpers/narrow-clip.ts): it takes no presses (its hit child does),
+ * and its width is held at timeline.css's 6 px so the `:hover` 8 px never moves its centre.
+ */
+const NARROW_HANDLE_STYLE = { pointerEvents: "none" as const, width: 6 };
+
 export interface TrackElementDragPayload {
   element: TrackElement;
   dragType: string;
@@ -992,9 +998,12 @@ export const TrackElementView = memo(({
   // NARROW SELECTED OVERLAY CLIPS STAY DRAGGABLE (helpers/narrow-clip.ts). Under 48 px the two
   // handles' hit zones covered the whole clip and the move gesture bails on any handle, so the clip
   // could not be moved. There, each handle stops taking presses (inline pointerEvents "none" also
-  // disables its ::before) and an outward-only hit child takes them instead; presses on the child
-  // bubble to bindStartHandle/bindEndHandle and `closest(".twick-track-element-handle")` still keeps
-  // them out of the move. Inline, like the give-back band: no studio.css change.
+  // disables its ::before) and a hit child reaching outward from the handle's centre takes them
+  // instead; presses on the child bubble to bindStartHandle/bindEndHandle and
+  // `closest(".twick-track-element-handle")` still keeps them out of the move. Each handle also holds
+  // an inline 6 px width: hovering the child puts its handle in :hover, whose 8 px width moved the
+  // END handle's centre (and the zone anchored on it) 2 px left, so the zone flickered in a 2 px band
+  // at its outer edge. Inline, like the give-back band: no studio.css change.
   // Decided from the clip as it was when a TRIM began, not its live width: re-deciding mid-trim at
   // 48 px would unmount the hit child holding the pointer (a narrow clip dragged wider) or take
   // presses away from the handle being dragged (a wide one dragged narrower).
@@ -1147,7 +1156,7 @@ export const TrackElementView = memo(({
             style={{
               touchAction: "none",
               zIndex: isSelected ? 100 : 1,
-              ...(narrow ? { pointerEvents: "none" as const } : {}),
+              ...(narrow ? NARROW_HANDLE_STYLE : {}),
             }}
             {...bindStartHandle()}
             title={startReclaimTitle}
@@ -1156,9 +1165,11 @@ export const TrackElementView = memo(({
             }`}
           >
             {narrow ? (
-              // Anchored on the handle centre (which the hover width change keeps), reaching LEFT by
-              // today's full outer reach and into the clip only by the left-edge inner grab. Carries
-              // the handle's tooltip, since the handle itself no longer takes the hover.
+              // Anchored on the handle centre (the clip's left edge), reaching LEFT by today's full
+              // outer reach and into the clip only by the left-edge inner grab. Its title passes the
+              // handle's give-back tooltip through, since the handle itself no longer takes the
+              // hover; only the main track ever sets one and narrow zones are overlay-only, so today
+              // it is always unset.
               <div
                 data-twick-narrow-hit="start"
                 title={startReclaimTitle}
@@ -1239,7 +1250,7 @@ export const TrackElementView = memo(({
             style={{
               touchAction: "none",
               zIndex: isSelected ? 100 : 1,
-              ...(narrow ? { pointerEvents: "none" as const } : {}),
+              ...(narrow ? NARROW_HANDLE_STYLE : {}),
             }}
             {...bindEndHandle()}
             title={reclaimTitle}
@@ -1248,7 +1259,10 @@ export const TrackElementView = memo(({
             }`}
           >
             {narrow ? (
-              // The mirror of the start zone: from the handle centre RIGHT by the full outer reach.
+              // From the handle centre RIGHT by the full outer reach. That centre sits 4 px INSIDE the
+              // clip (`right: -2px` and translate(-50%) on a 6 px handle), so the zone covers the last
+              // 4 px of the clip and 7 px past it; the inline 6 px width keeps the centre there under
+              // hover. Its title passes through as on the start zone (always unset today).
               <div
                 data-twick-narrow-hit="end"
                 title={reclaimTitle}
