@@ -428,33 +428,40 @@ export class TimelineEditor {
    * Add an element to a specific track using the visitor pattern.
    * @param track The track to add the element to.
    * @param element The element to add.
+   * @param options.keepTimes The element is an EXISTING clip moved here (a cross-row drop), not a
+   *   fresh add: it keeps its start, end, in-point and length exactly (see ElementAdder). A fresh
+   *   add (the default) is placed inside the main video and its source.
    * @returns A promise that resolves to `true` if the element was added successfully, otherwise `false`.
    */
   async addElementToTrack(
     track: Track,
-    element: TrackElement
+    element: TrackElement,
+    options: { keepTimes?: boolean } = {}
   ): Promise<boolean> {
     if (!track) {
       throw new Error("TRACK_NOT_FOUND");
     }
     try {
-      // Find the main video track's end time to clamp overlay elements. The main video is the
-      // track NAMED "Video" (video-editor's isMainVideoTrack rule), never just the first
-      // VIDEO-typed track: a cross-row overlap drop inserts a VIDEO-typed "Video Track" overlay
-      // ABOVE main, and its clip's end then capped every later add. The first VIDEO-typed track is
-      // only the fallback for a host with no "Video" track.
+      // The main video's end limits every track but the main one, which defines it. The main
+      // video is the track NAMED "Video" (video-editor's isMainVideoTrack rule), never just the
+      // first VIDEO-typed track: a cross-row overlap drop inserts a VIDEO-typed "Video Track"
+      // overlay ABOVE main, and its clip's end then capped every later add. The first VIDEO-typed
+      // track is only the fallback for a host with no "Video" track. A VIDEO-typed overlay row is
+      // limited like any other overlay: it used to be exempt by type, so an image dragged onto one
+      // 3 s before the end ran 1 s past it and lengthened the export. A move (keepTimes) gets the
+      // limit too and ElementAdder drops it: the one place that decides what a move keeps.
       let maxDuration: number | undefined;
-      if (track.getType() !== TRACK_TYPES.VIDEO) {
-        const mainTrack =
-          this.getTrackByName(MAIN_VIDEO_TRACK_NAME) ?? this.getTracksByType(TRACK_TYPES.VIDEO)[0];
-        const videoElements = mainTrack?.getElements() ?? [];
+      const mainTrack =
+        this.getTrackByName(MAIN_VIDEO_TRACK_NAME) ?? this.getTracksByType(TRACK_TYPES.VIDEO)[0];
+      if (mainTrack && mainTrack.getId() !== track.getId()) {
+        const videoElements = mainTrack.getElements();
         if (videoElements.length > 0) {
           maxDuration = Math.max(...videoElements.map(el => el.getEnd()));
         }
       }
 
       // Use the visitor pattern to handle different element types
-      const elementAdder = new ElementAdder(track, false, maxDuration);
+      const elementAdder = new ElementAdder(track, false, maxDuration, options.keepTimes === true);
       const result = await element.accept(elementAdder);
 
       if (result) {
@@ -815,7 +822,9 @@ export class TimelineEditor {
 
     this.adjustCaptionWordsForTimeChange(element, prevStart, prevEnd);
 
-    const elementAdder = new ElementAdder(newTrack);
+    // A MOVE of an existing clip (every caller is a drop): it keeps its times exactly, with no cut
+    // to its file (ElementAdder keepTimes; Ben, 2026-11-02). The probe still runs.
+    const elementAdder = new ElementAdder(newTrack, false, undefined, true);
     await element.accept(elementAdder);
 
     const insertIndex = Math.max(0, Math.min(targetTrackIndex, currentTracks.length));

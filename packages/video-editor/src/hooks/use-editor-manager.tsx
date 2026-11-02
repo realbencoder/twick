@@ -9,12 +9,43 @@ import {
 } from "@twick/timeline";
 import { useEffect, useRef } from "react";
 import { placeKeepingLength } from "../helpers/media-range";
+import { isMainVideoTrack } from "../helpers/editor.utils";
 
 /**
  * Within this many seconds of the main end, ElementAdder pulls a video back to end with the video
  * (its fitVideoToMainEnd: clampEnd's 0.1 s floor would otherwise put it past the end).
  */
 const MAIN_END_PULL_BACK_SECONDS = 0.1;
+
+/**
+ * The main video's end, read the way `TimelineEditor.addElementToTrack` reads it: the latest end on
+ * the track NAMED "Video". Only a host with no "Video" track falls back to the latest end of any
+ * video element on any track. Taking that max over every track made a B-roll left past the end
+ * (the main video trimmed under it) "the main end", and a picked 5 s part added with + at the end
+ * then came out 1-3 s long (audit 2026-11-02).
+ */
+const mainVideoEndOf = (tracks: Track[]): number => {
+  const mainTrack = tracks.find((t) => isMainVideoTrack(t));
+  let end = 0;
+  if (mainTrack) {
+    for (const el of mainTrack.getElements()) end = Math.max(end, el.getEnd());
+    return end;
+  }
+  for (const t of tracks) {
+    for (const el of (t.getElements?.() || [])) {
+      if (el.getType?.() === 'video') end = Math.max(end, el.getEnd());
+    }
+  }
+  return end;
+};
+
+/**
+ * Whether + may add onto the track the creator selected by its header. Never the main "Video"
+ * track (its clips are the recording, concatenated by the export) and never a caption track (it
+ * holds subtitles only): those adds go to a new overlay row, as with nothing selected.
+ */
+const takesAddsFromHeader = (track: Track): boolean =>
+  !isMainVideoTrack(track) && track.getType() !== TRACK_TYPES.CAPTION;
 
 /**
  * Custom hook for managing video editor operations.
@@ -90,15 +121,7 @@ export const useEditorManager = () => {
     // else (audio, text, shapes, an image with a preset end) keeps today's clamp there. A VIDEO
     // starting less than 0.1 s before the end is left to ElementAdder too: cut here, it became a
     // sub-0.1 s sliver that the pull-back then kept (the length it keeps is the one it is handed).
-    const tracks = editor.getTimelineData()?.tracks || [];
-    let mainVideoEnd = 0;
-    for (const t of tracks) {
-      for (const el of (t.getElements?.() || [])) {
-        if (el.getType?.() === 'video') {
-          mainVideoEnd = Math.max(mainVideoEnd, el.getEnd());
-        }
-      }
-    }
+    const mainVideoEnd = mainVideoEndOf(editor.getTimelineData()?.tracks || []);
     const videoAtTheEnd =
       element.getType?.() === 'video' && element.getStart() > mainVideoEnd - MAIN_END_PULL_BACK_SECONDS;
     if (
@@ -114,7 +137,7 @@ export const useEditorManager = () => {
     // track the creator made or selected).
     let createdTrack: Track | null = null;
     try {
-      if (selectedItem instanceof Track) {
+      if (selectedItem instanceof Track && takesAddsFromHeader(selectedItem)) {
         const result = await editor.addElementToTrack(selectedItem, element);
         if (result) {
           setSelectedItem(element);

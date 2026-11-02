@@ -629,13 +629,16 @@ export const useTimelineManager = (): TimelineManagerReturn => {
 
     // removeElement commits before the re-add, and timeline-view fires this drop without an await
     // or a catch, so a re-add that throws used to lose the clip. It never leaves it removed now.
+    // The re-add is a MOVE (keepTimes): the clip keeps the times it was dropped at, its in-point and
+    // its length, with no main-end limit, no pull-back and no cut to its file (Ben, 2026-11-02:
+    // moving a clip never changes it). The probe still runs, so a dead file still puts it back.
     const homeStart = element.getStart();
     const homeEnd = element.getEnd();
     editor.removeElement(element);
     element.setStart(updates.start);
     element.setEnd(updates.end);
     try {
-      if (await editor.addElementToTrack(targetTrack, element)) {
+      if (await editor.addElementToTrack(targetTrack, element, { keepTimes: true })) {
         setSelectedItem(element);
         editor.refresh();
         return;
@@ -646,8 +649,9 @@ export const useTimelineManager = (): TimelineManagerReturn => {
         error instanceof ValidationError &&
         error.errors?.includes(VALIDATION_ERROR_CODE.COLLISION_ERROR)
       ) {
-        // Dropped at or past the main end, the clip is pulled back to end with the video, and that
-        // span can land on a clip on this row: give it a new row there, as an overlap drop does.
+        // The row refused the clip's span: give it a new row at the same times, as an overlap drop
+        // does. Unreachable today (the overlap check above already passed and the move keeps its
+        // times; the track's own check is the stricter one), kept so a refusal can never lose it.
         try {
           if (await editor.moveElementToNewTrackAt(element, dropTarget.trackIndex + 1, element.getStart())) {
             setSelectedItem(element);

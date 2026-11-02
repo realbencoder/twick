@@ -31,6 +31,7 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
   private trackFriend: TrackFriend;
   private skipMetaUpdate: boolean;
   private maxDuration: number | undefined;
+  private keepTimes: boolean;
 
   /**
    * Creates a new ElementAdder instance for the specified track.
@@ -39,6 +40,10 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
    * @param skipMetaUpdate - If true, skips video/audio metadata fetch (used for split elements that already have metadata)
    * @param maxDuration - If set, clamps element end times to this value (prevents B-roll/images from exceeding main video duration).
    *   A main video of 0 s or less sets no limit: clamping to it could only make 0.1 s slivers.
+   * @param keepTimes - The element is an EXISTING clip being moved (a cross-row drop), not a fresh add:
+   *   it keeps its start, end, in-point and length exactly. No main-end limit (`maxDuration` is
+   *   ignored), no pull-back at the end and no cut to the source (Ben, 2026-11-02: moving a clip never
+   *   changes it). The probe still runs, so a file that no longer loads still fails the move.
    *
    * @example
    * ```js
@@ -46,11 +51,13 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
    * const success = await adder.visitVideoElement(videoElement);
    * ```
    */
-  constructor(track: Track, skipMetaUpdate: boolean = false, maxDuration?: number) {
+  constructor(track: Track, skipMetaUpdate: boolean = false, maxDuration?: number, keepTimes: boolean = false) {
     this.track = track;
     this.trackFriend = track.createFriend();
     this.skipMetaUpdate = skipMetaUpdate;
-    this.maxDuration = maxDuration !== undefined && maxDuration > 0 ? maxDuration : undefined;
+    this.keepTimes = keepTimes;
+    this.maxDuration =
+      !keepTimes && maxDuration !== undefined && maxDuration > 0 ? maxDuration : undefined;
   }
 
   /**
@@ -122,11 +129,14 @@ export class ElementAdder implements ElementVisitor<Promise<boolean>> {
       element.setEnd(element.getStart() + sourceLeft);
     } else if (
       !this.skipMetaUpdate &&
+      !this.keepTimes &&
       sourceLeft > 0 &&
       element.getEnd() - element.getStart() > sourceLeft
     ) {
-      // A preset end (a picked range) past the source is cut to it, on a FRESH probe only: split
-      // and rollback halves (skipMetaUpdate) keep the times the cloner gave them.
+      // A preset end (a picked range) past the source is cut to it, on a FRESH add only: split and
+      // rollback halves (skipMetaUpdate) keep the times the cloner gave them, and a moved clip
+      // (keepTimes) keeps its own, even one that runs past its file (its tail holds the last frame
+      // in the preview AND the export, so cutting it would change what the creator made).
       element.setEnd(element.getStart() + sourceLeft);
     }
     this.fitVideoToMainEnd(element);
