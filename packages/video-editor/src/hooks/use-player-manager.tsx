@@ -13,6 +13,7 @@ import {
 import { useLivePlayerContext } from "@twick/live-player";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createElementFromDrop } from "./use-timeline-drop";
+import { placeKeepingLength } from "../helpers/media-range";
 import type { CanvasDropPayload } from "./use-canvas-drop";
 import type { CanvasConfig } from "../helpers/types";
 
@@ -171,10 +172,11 @@ export const usePlayerManager = ({
 
   const handleDropOnCanvas = useCallback(
     async (payload: CanvasDropPayload) => {
-      const { type, url, canvasX, canvasY } = payload;
-      const element = createElementFromDrop(type, url, videoResolution);
+      const { type, url, canvasX, canvasY, range } = payload;
+      // A picked range starts at its in-point and keeps its length at the playhead.
+      const element = createElementFromDrop(type, url, videoResolution, range);
       const currentTime = getCurrentTime();
-      element.setStart(currentTime);
+      placeKeepingLength(element, currentTime);
 
       // Insert above video track (after caption track) so overlays appear on top
       const _dropTracks = editor.getTimelineData()?.tracks || [];

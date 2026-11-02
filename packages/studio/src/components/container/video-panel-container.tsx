@@ -8,6 +8,7 @@ import SearchInput from "../shared/search-input";
 import type { AssetProviderConfig, MediaItem } from "@twick/video-editor";
 import { throttle } from "@twick/video-editor";
 import { getAssetLibrary } from "../../helpers/asset-library";
+import { addPublicVideo } from "../../helpers/public-video-add";
 
 export function VideoPanelContainer(props: PanelProps) {
   const [activeSource, setActiveSource] = useState<"user" | "public">("user");
@@ -142,36 +143,39 @@ function VideoPublicAssetsSection(props: PanelProps) {
   // could both pass. The ref is set synchronously, so the second caller always sees it.
   const proxyingRef = useRef(false);
 
-  // Proxy public video assets through our S3 before adding to timeline
+  // Public video: the host's range picker opens on the RAW url first, then the proxy copies the
+  // asset into our S3 (only after Add), then the picked part lands (addPublicVideo).
   const handlePublicSelection = async (item: MediaItem, forceAdd?: boolean) => {
-    // Re-entrancy guard: the proxy takes seconds; without this every extra click during the
-    // window queued another identical add (audit finding #2 — duplicate B-roll stacks).
+    // Re-entrancy guard, held across the WHOLE add (picker, proxy and add): without it every extra
+    // click while the picker is open or the proxy runs queued another identical add (audit
+    // finding #2 — duplicate B-roll stacks).
     if (proxyingRef.current) return;
     proxyingRef.current = true;
-    setProxyingId(item.id);
     try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (props.uploadConfig?.headers) Object.assign(headers, props.uploadConfig.headers);
-      const res = await fetch("/api/assets/proxy", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ url: item.url, type: "video", name: `pexels-${item.id}.mp4` }),
+      await addPublicVideo(item, {
+        proxy: async (rawUrl) => {
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (props.uploadConfig?.headers) Object.assign(headers, props.uploadConfig.headers);
+          const res = await fetch("/api/assets/proxy", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ url: rawUrl, type: "video", name: `pexels-${item.id}.mp4` }),
+          });
+          if (!res.ok) {
+            console.error(`[twick] the Public video proxy answered ${res.status}`);
+            return null;
+          }
+          const data = await res.json();
+          return typeof data?.url === "string" && data.url ? data.url : null;
+        },
+        add: (proxied, pick) => handleSelection(proxied, forceAdd, pick),
+        // The tile's spinner starts with the proxy, never behind the picker.
+        onProxyStart: () => setProxyingId(item.id),
       });
-      if (res.ok) {
-        const data = await res.json();
-        // Awaited so an ADD-stage rejection (not just a proxy failure) hits the catch below
-        // and surfaces via the failed event instead of an unhandled rejection (review #120 nit).
-        await handleSelection({ ...item, url: data.url }, forceAdd);
-      } else {
-        // Proxy failed — do NOT fall back to the raw external URL (it persists a broken,
-        // CORS-hostile asset into project_data; audit finding #3). Surface it instead.
-        window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
-      }
-    } catch {
-      window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
+    } finally {
+      setProxyingId(null);
+      proxyingRef.current = false;
     }
-    setProxyingId(null);
-    proxyingRef.current = false;
   };
 
   const assetLibrary = getAssetLibrary();

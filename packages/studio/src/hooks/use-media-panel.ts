@@ -5,7 +5,8 @@ import {
   ImageElement,
   Size,
 } from "@twick/timeline";
-import type { MediaItem } from "@twick/video-editor";
+import { applyMediaRange, pickMediaRange } from "@twick/video-editor";
+import type { MediaItem, MediaRangePick, PickedMediaRange } from "@twick/video-editor";
 import { getMediaManager } from "../components/shared";
 import { useMedia } from "../context/media-context";
 
@@ -18,7 +19,11 @@ export interface MediaPanelState {
 
 export interface MediaPanelActions {
   setSearchQuery: (query: string) => void;
-  handleSelection: (item: MediaItem, forceAdd?: boolean) => void;
+  /**
+   * Adds `item` at the playhead (forceAdd, or nothing selected), else swaps the selected clip's
+   * source. A video add opens the host's range picker first unless `pick` says what was picked.
+   */
+  handleSelection: (item: MediaItem, forceAdd?: boolean, pick?: MediaRangePick) => Promise<void>;
   handleFileUpload: (fileData: { file: File; blobUrl: string }) => void;
 }
 
@@ -67,7 +72,7 @@ export const useMediaPanel = (
     updateElement,
   }: {
     selectedElement: TrackElement | null;
-    addElement: (element: TrackElement) => void;
+    addElement: (element: TrackElement) => void | Promise<void>;
     updateElement: (element: TrackElement) => void;
   },
   videoResolution: Size
@@ -76,26 +81,39 @@ export const useMediaPanel = (
     useMedia(type);
   const mediaManager = getMediaManager();
 
-  const handleSelection = async (item: MediaItem, forceAdd?: boolean) => {
+  /**
+   * Adds `item` as a new element at the playhead. A video asks the host's range picker which part
+   * to add first, with the item's real name, unless the caller already asked (`pick`: the Public
+   * path picks on the RAW url before its proxy). A cancel adds nothing and writes no undo entry;
+   * no picker (a non-app host) adds the whole clip, as before.
+   */
+  const addNewElement = async (item: MediaItem, pick?: MediaRangePick) => {
+    const config = mediaConfigs[type];
+    let range: PickedMediaRange | undefined;
+    if (type === "video") {
+      const choice = pick ?? (await pickMediaRange({ url: item.url, name: item.name }));
+      if (choice.kind === "cancel") return;
+      if (choice.kind === "range") range = { inSec: choice.inSec, outSec: choice.outSec };
+    }
+    const element = config.createElement(item.url, videoResolution);
+    // Mute B-roll video audio by default — users want visuals, not stock audio
+    if (type === "video" && element instanceof VideoElement) {
+      element.setProps({ ...element.getProps(), volume: 0 });
+      if (range) applyMediaRange(element, range);
+    }
+    await addElement(element);
+  };
+
+  const handleSelection = async (item: MediaItem, forceAdd?: boolean, pick?: MediaRangePick) => {
     const config = mediaConfigs[type];
     if (forceAdd) {
-      const element = config.createElement(item.url, videoResolution);
-      // Mute B-roll video audio by default — users want visuals, not stock audio
-      if (type === "video" && element instanceof VideoElement) {
-        element.setProps({ ...element.getProps(), volume: 0 });
-      }
-      addElement(element);
+      await addNewElement(item, pick);
     } else {
       if (selectedElement) {
         await config.updateElement(selectedElement, item.url);
         updateElement(selectedElement);
       } else {
-        const element = config.createElement(item.url, videoResolution);
-        // Mute B-roll video audio by default
-        if (type === "video" && element instanceof VideoElement) {
-          element.setProps({ ...element.getProps(), volume: 0 });
-        }
-        addElement(element);
+        await addNewElement(item, pick);
       }
     }
   };

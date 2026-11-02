@@ -1,13 +1,21 @@
 import { useCallback } from "react";
 import { getAssetTypeFromFile, DroppableAssetType } from "../helpers/asset-type";
 import { TIMELINE_DROP_MEDIA_TYPE } from "../helpers/constants";
-import { resolveDroppedMediaUrl, uploadDroppedFile } from "./use-timeline-drop";
+import { pickMediaRange, rangeOfPick, type PickedMediaRange } from "../helpers/media-range";
+import {
+  addDroppedUpload,
+  parsePanelDrop,
+  resolveDroppedMediaUrl,
+  uploadDroppedFile,
+} from "./use-timeline-drop";
 
 export interface CanvasDropPayload {
   type: DroppableAssetType;
   url: string;
   canvasX?: number;
   canvasY?: number;
+  /** The part of a video the creator picked, in source seconds; absent = the whole clip. */
+  range?: PickedMediaRange;
 }
 
 /**
@@ -44,68 +52,55 @@ export function useCanvasDrop({
       e.preventDefault();
       e.stopPropagation();
 
-      let type: DroppableAssetType | null = null;
-      let url: string | null = null;
-      let wasProxied = false;
+      // Everything this drop needs comes off the event NOW, before the first await: the browser
+      // empties the drag data store once the drop handlers return, and the picker below waits on
+      // the creator for as long as they like (the preview can be gone or moved by then).
+      const canvasX = getCanvasX(e, containerRef.current, videoSize);
+      const canvasY = getCanvasY(e, containerRef.current, videoSize);
+      const panelPayload = e.dataTransfer.types.includes(TIMELINE_DROP_MEDIA_TYPE)
+        ? e.dataTransfer.getData(TIMELINE_DROP_MEDIA_TYPE)
+        : null;
+      const files = panelPayload === null ? Array.from(e.dataTransfer.files || []) : [];
 
       // Handle media dragged from studio panels
-      if (e.dataTransfer.types.includes(TIMELINE_DROP_MEDIA_TYPE)) {
-        try {
-          const data = JSON.parse(
-            e.dataTransfer.getData(TIMELINE_DROP_MEDIA_TYPE) || "{}"
-          ) as { type?: DroppableAssetType; url?: string; needsProxy?: boolean; name?: string };
-          if (data.type && data.url) {
-            // Public items proxy through S3 first (see resolveDroppedMediaUrl) — null = failed,
-            // event already fired, drop is abandoned cleanly.
-            const resolvedUrl = await resolveDroppedMediaUrl(data);
-            if (!resolvedUrl) return;
-            type = data.type;
-            url = resolvedUrl;
-            wasProxied = !!data.needsProxy;
-          }
-        } catch {
-          // Invalid JSON
+      if (panelPayload !== null) {
+        const data = parsePanelDrop(panelPayload);
+        if (!data) return;
+        // A video asks the host which part to add, on the RAW url, before any proxy (a cancel
+        // costs no proxy call). The drag payload's name is made up, so the picker gets none.
+        let range: PickedMediaRange | undefined;
+        if (data.type === "video") {
+          const pick = await pickMediaRange({ url: data.url });
+          if (pick.kind === "cancel") return;
+          range = rangeOfPick(pick);
         }
-      }
-
-      // Handle files from OS
-      if (!type || !url) {
-        const files = Array.from(e.dataTransfer.files || []);
-        for (const file of files) {
-          const detectedType = getAssetTypeFromFile(file);
-          if (detectedType) {
-            // Permanent CDN URL via the app upload bridge — a revoked blob: src broke the element
-            // in-session and on restore (audit persistence trace).
-            const uploadedUrl = await uploadDroppedFile(file);
-            if (!uploadedUrl) return;
-            try {
-              await onDrop({
-                type: detectedType,
-                url: uploadedUrl,
-                canvasX: getCanvasX(e, containerRef.current, videoSize),
-                canvasY: getCanvasY(e, containerRef.current, videoSize),
-              });
-              window.dispatchEvent(new CustomEvent("twick-media-add-done"));
-            } catch {
-              window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
-            }
-            return;
-          }
+        // Public items proxy through S3 first (see resolveDroppedMediaUrl) — null = failed,
+        // event already fired, drop is abandoned cleanly.
+        const resolvedUrl = await resolveDroppedMediaUrl(data);
+        if (!resolvedUrl) return;
+        try {
+          await onDrop({ type: data.type, url: resolvedUrl, canvasX, canvasY, range });
+          if (data.needsProxy) window.dispatchEvent(new CustomEvent("twick-media-add-done"));
+        } catch (err) {
+          // The add failed: surface it (rule #26), proxied or not.
+          console.error("[twick] adding the dropped media failed", err);
+          window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
         }
         return;
       }
 
-      try {
-        await onDrop({
-          type,
-          url,
-          canvasX: getCanvasX(e, containerRef.current, videoSize),
-          canvasY: getCanvasY(e, containerRef.current, videoSize),
-        });
-        if (wasProxied) window.dispatchEvent(new CustomEvent("twick-media-add-done"));
-      } catch {
-        // Post-proxy add failed — surface it (rule #26); no-op toast-wise for non-proxied drops.
-        if (wasProxied) window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
+      // Handle files from OS
+      for (const file of files) {
+        const detectedType = getAssetTypeFromFile(file);
+        if (!detectedType) continue;
+        // Permanent CDN URL via the app upload bridge — a revoked blob: src broke the element
+        // in-session and on restore (audit persistence trace).
+        const uploadedUrl = await uploadDroppedFile(file);
+        if (!uploadedUrl) return;
+        await addDroppedUpload({ type: detectedType, url: uploadedUrl, name: file.name }, (range) =>
+          onDrop({ type: detectedType, url: uploadedUrl, canvasX, canvasY, range })
+        );
+        return;
       }
     },
     [enabled, containerRef, videoSize, onDrop]

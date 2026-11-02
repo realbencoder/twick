@@ -18,6 +18,7 @@ import { DRAG_TYPE } from "../../helpers/constants";
 import type { Size } from "@twick/timeline";
 import type { ChapterMarker } from "@twick/timeline";
 import type { TrackElementDragPayload } from "../track/track-element";
+import type { PickedMediaRange } from "../../helpers/media-range";
 
 /** Width of sticky left area (add track button + track headers) in pixels */
 // LABEL_WIDTH and SEPARATOR_HEIGHT imported from ../../helpers/time-scale (single source of truth)
@@ -98,6 +99,8 @@ function TimelineView({
     timeSec: number;
     type: "video" | "audio" | "image";
     url: string;
+    /** The part of a video the creator picked, in source seconds; absent = the whole clip. */
+    range?: PickedMediaRange;
   }) => Promise<void>;
   /** Video resolution for creating elements from dropped files */
   videoResolution?: Size;

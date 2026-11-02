@@ -5,11 +5,22 @@ import {
   VideoElement,
   AudioElement,
   ImageElement,
+  TimelineEditor,
+  TrackElement,
+  ValidationError,
+  VALIDATION_ERROR_CODE,
 } from "@twick/timeline";
-import { isMainVideoTrack } from "../helpers/editor.utils";
+import { canDropElementOnTrack, isMainVideoTrack } from "../helpers/editor.utils";
 import { getAssetTypeFromFile, DroppableAssetType } from "../helpers/asset-type";
 import { TIMELINE_DROP_MEDIA_TYPE } from "../helpers/constants";
 import { createTimeScale } from "../helpers/time-scale";
+import {
+  applyMediaRange,
+  pickMediaRange,
+  placeKeepingLength,
+  rangeOfPick,
+  type PickedMediaRange,
+} from "../helpers/media-range";
 import type { Size } from "@twick/timeline";
 
 export interface DropPreview {
@@ -47,11 +58,13 @@ export function useTimelineDrop({
   labelWidth: number;
   trackHeight: number;
   trackContentWidth?: number;
+  /** `range`: the part of a video the creator picked, in source seconds; absent = the whole clip. */
   onDrop: (params: {
     track: Track | null;
     timeSec: number;
     type: DroppableAssetType;
     url: string;
+    range?: PickedMediaRange;
   }) => Promise<void>;
   enabled?: boolean;
 }) {
@@ -149,40 +162,48 @@ export function useTimelineDrop({
       setIsDraggingOver(false);
       setPreview(null);
 
+      // Everything this drop needs comes off the event NOW, before the first await: the browser
+      // empties the drag data store once the drop handlers return, and the picker below waits on
+      // the creator for as long as they like.
       const pos = computePosition(e.clientX, e.clientY);
       if (!pos || pos.trackIndex < 0) return;
       const track = tracks[pos.trackIndex] ?? null;
+      const panelPayload = e.dataTransfer.types.includes(TIMELINE_DROP_MEDIA_TYPE)
+        ? e.dataTransfer.getData(TIMELINE_DROP_MEDIA_TYPE)
+        : null;
+      const files = panelPayload === null ? Array.from(e.dataTransfer.files || []) : [];
 
       // Handle media dragged from studio panels (video, audio, image)
-      if (e.dataTransfer.types.includes(TIMELINE_DROP_MEDIA_TYPE)) {
+      if (panelPayload !== null) {
+        const data = parsePanelDrop(panelPayload);
+        if (!data) return;
+        // A video asks the host which part to add, on the RAW url (a Public item is proxied only
+        // after Add, so a cancel costs no proxy call). The drag payload's name is made up
+        // (`pexels-<id>.mp4`), so the picker gets none.
+        let range: PickedMediaRange | undefined;
+        if (data.type === "video") {
+          const pick = await pickMediaRange({ url: data.url });
+          if (pick.kind === "cancel") return;
+          range = rangeOfPick(pick);
+        }
+        // Public items proxy through S3 first — a raw pexels URL must never reach the timeline.
+        const resolvedUrl = await resolveDroppedMediaUrl(data);
+        if (!resolvedUrl) return;
         try {
-          const data = JSON.parse(
-            e.dataTransfer.getData(TIMELINE_DROP_MEDIA_TYPE) || "{}"
-          ) as { type?: DroppableAssetType; url?: string; needsProxy?: boolean; name?: string };
-          if (data.type && data.url) {
-            // Public items proxy through S3 first — a raw pexels URL must never reach the timeline.
-            const resolvedUrl = await resolveDroppedMediaUrl(data);
-            if (!resolvedUrl) return;
-            await onDrop({
-              track,
-              timeSec: pos.timeSec,
-              type: data.type,
-              url: resolvedUrl,
-            });
-            // Add actually completed — settle the loading toast (only meaningful when a proxy
-            // fired 'started'; the app's listener no-ops otherwise).
-            if (data.needsProxy) window.dispatchEvent(new CustomEvent("twick-media-add-done"));
-          }
-        } catch {
-          // The add stage failed after a successful proxy — surface it, never swallow (rule #26 /
-          // review #120: the old empty catch let a failed add read as success).
+          await onDrop({ track, timeSec: pos.timeSec, type: data.type, url: resolvedUrl, range });
+          // Add actually completed — settle the loading toast (only meaningful when a proxy
+          // fired 'started'; the app's listener no-ops otherwise).
+          if (data.needsProxy) window.dispatchEvent(new CustomEvent("twick-media-add-done"));
+        } catch (err) {
+          // The add stage failed: surface it, never swallow (rule #26 / review #120: the old
+          // empty catch let a failed add read as success).
+          console.error("[twick] adding the dropped media failed", err);
           window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
         }
         return;
       }
 
       // Handle files dragged from OS (Finder, Explorer, etc.)
-      const files = Array.from(e.dataTransfer.files || []);
       for (const file of files) {
         const type = getAssetTypeFromFile(file);
         if (!type) continue;
@@ -190,18 +211,10 @@ export function useTimelineDrop({
         // in-session AND persisted a dead src (audit persistence trace). Permanent URL only.
         const uploadedUrl = await uploadDroppedFile(file);
         if (!uploadedUrl) break;
-        try {
-          // (Stale-track safety lives downstream: handleDropOnTimeline re-resolves by id.)
-          await onDrop({
-            track,
-            timeSec: pos.timeSec,
-            type,
-            url: uploadedUrl,
-          });
-          window.dispatchEvent(new CustomEvent("twick-media-add-done"));
-        } catch {
-          window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
-        }
+        // (Stale-track safety lives downstream: dropMediaOnTimeline re-resolves by id.)
+        await addDroppedUpload({ type, url: uploadedUrl, name: file.name }, (range) =>
+          onDrop({ track, timeSec: pos.timeSec, type, url: uploadedUrl, range })
+        );
         break; // Only first valid file for now
       }
     },
@@ -260,7 +273,7 @@ export async function uploadDroppedFile(file: File): Promise<string | null> {
       __twick_upload_media?: (file: File) => Promise<string | null>;
     }).__twick_upload_media;
     const url = typeof upload === "function" ? await upload(file) : null;
-    if (url) return url; // caller fires 'done' after the ADD completes
+    if (url) return url; // the caller settles 'done' (addDroppedUpload)
   } catch {
     /* fall through */
   }
@@ -268,10 +281,65 @@ export async function uploadDroppedFile(file: File): Promise<string | null> {
   return null;
 }
 
+/**
+ * A panel drag's payload (video-panel.tsx and friends), or null when it is not one: logged and
+ * surfaced as `twick-media-add-failed`, never a drop that silently does nothing (rule #26).
+ */
+export function parsePanelDrop(
+  raw: string
+): { type: DroppableAssetType; url: string; needsProxy?: boolean; name?: string } | null {
+  try {
+    const data = JSON.parse(raw || "{}") as {
+      type?: DroppableAssetType;
+      url?: string;
+      needsProxy?: boolean;
+      name?: string;
+    };
+    if (data && data.type && data.url) return data as { type: DroppableAssetType; url: string };
+    console.error("[twick] a panel drop with no type or url; adding nothing", data);
+  } catch (err) {
+    console.error("[twick] an unreadable panel drop; adding nothing", err);
+  }
+  window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
+  return null;
+}
+
+/**
+ * Adds an OS-dropped file once `uploadDroppedFile` has put it on the CDN. A video is a library add
+ * with extra steps: the upload's toast settles FIRST ('done'), so it never spins behind the
+ * picker, then the picker opens with the file's real name. A cancel, or a file the picker can't
+ * play (an iPhone HEVC .MOV), adds nothing; the upload stays a library row by design. Any other
+ * type adds as before and settles after the add. A failed add is logged and surfaced.
+ */
+export async function addDroppedUpload(
+  file: { type: DroppableAssetType; url: string; name: string },
+  add: (range: PickedMediaRange | undefined) => Promise<void>
+): Promise<void> {
+  let range: PickedMediaRange | undefined;
+  if (file.type === "video") {
+    window.dispatchEvent(new CustomEvent("twick-media-add-done"));
+    const pick = await pickMediaRange({ url: file.url, name: file.name });
+    if (pick.kind === "cancel") return;
+    range = rangeOfPick(pick);
+  }
+  try {
+    await add(range);
+    if (file.type !== "video") window.dispatchEvent(new CustomEvent("twick-media-add-done"));
+  } catch (err) {
+    console.error("[twick] adding the dropped file failed", err);
+    window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
+  }
+}
+
+/**
+ * Builds the element a drop adds. A video with a picked `range` starts at its in-point and is
+ * preset to the range's length (applyMediaRange); place it with `placeKeepingLength`.
+ */
 export function createElementFromDrop(
   type: DroppableAssetType,
   blobUrl: string,
-  parentSize: Size
+  parentSize: Size,
+  range?: PickedMediaRange
 ): VideoElement | AudioElement | ImageElement {
   switch (type) {
     case "video": {
@@ -280,6 +348,7 @@ export function createElementFromDrop(
       // click-add default. The drag path previously left it at full volume, so stock ambient audio
       // competed with the voiceover (audit #4). The creator can un-mute via the volume slider.
       el.setVolume(0);
+      if (range) applyMediaRange(el, range);
       return el;
     }
     case "audio":
@@ -289,4 +358,79 @@ export function createElementFromDrop(
     default:
       throw new Error(`Unknown asset type: ${type}`);
   }
+}
+
+/**
+ * Adds a dropped media item at the drop x (TimelineManager's onDrop). With a picked `range` the
+ * element starts at the range's in-point and keeps its length at `timeSec`; without one it is the
+ * whole clip, as before. It lands on the row under the pointer when that row takes it, else on a
+ * new row just under Subtitles, and a collision moves it to a new row too.
+ *
+ * Exported FOR TESTING too: the app suite runs it against the shipped dist
+ * (tests/unit/media-range-add-paths-dist.test.tsx).
+ */
+export async function dropMediaOnTimeline(
+  editor: TimelineEditor,
+  params: {
+    track: Track | null;
+    timeSec: number;
+    type: DroppableAssetType;
+    url: string;
+    range?: PickedMediaRange;
+  },
+  videoResolution: Size,
+  setSelectedItem: (el: TrackElement) => void
+): Promise<void> {
+  const { track, timeSec, type, url, range } = params;
+  const element = createElementFromDrop(type, url, videoResolution, range);
+  placeKeepingLength(element, timeSec);
+
+  // Re-resolve the drop track by ID: a proxied drop awaits 5-30s between capture and here (and a
+  // picked one waits on the creator), and any ripple/reorder/undo in that window rebuilds every
+  // Track via fromJSON — adding to the DETACHED instance would mutate an orphan and silently
+  // persist nothing (review #120 finding 1). A track deleted mid-flight falls through to the
+  // insert-new-track branch.
+  const liveTrack = track ? editor.getTrackById(track.getId()) ?? null : null;
+
+  // Type gate (same rule as cross-track element drops): new media must not land on an
+  // incompatible track — a stock clip released over the subtitle row would otherwise be
+  // ADDED TO THE CAPTION TRACK (and similarly onto the main recording track or a text
+  // lane). Incompatible target → fall through to the insert-new-track branch below.
+  const compatibleTrack =
+    liveTrack && canDropElementOnTrack(element, liveTrack) ? liveTrack : null;
+
+  // If no target track, insert above video (after caption track)
+  let targetTrack = compatibleTrack;
+  if (!targetTrack) {
+    const _tlTracks = editor.getTimelineData()?.tracks || [];
+    const _tlCaptionIdx = _tlTracks.findIndex((t2: any) => t2.getType() === TRACK_TYPES.CAPTION);
+    const _tlInsertIdx = _tlCaptionIdx >= 0 ? _tlCaptionIdx + 1 : 0;
+    targetTrack = editor.addTrack(`Track_${Date.now()}`, undefined, _tlInsertIdx);
+  }
+
+  const tryAdd = async (t: Track): Promise<boolean> => {
+    try {
+      const result = await editor.addElementToTrack(t, element);
+      if (result) {
+        setSelectedItem(element);
+        return true;
+      }
+    } catch (err) {
+      if (
+        err instanceof ValidationError &&
+        err.errors?.includes(VALIDATION_ERROR_CODE.COLLISION_ERROR)
+      ) {
+        const _collTracks = editor.getTimelineData()?.tracks || [];
+        const _collCaptionIdx = _collTracks.findIndex((t3: any) => t3.getType() === TRACK_TYPES.CAPTION);
+        const _collInsertIdx = _collCaptionIdx >= 0 ? _collCaptionIdx + 1 : 0;
+        const newTrack = editor.addTrack(`Track_${Date.now()}`, undefined, _collInsertIdx);
+        return tryAdd(newTrack);
+      }
+      throw err;
+    }
+    return false;
+  };
+
+  await tryAdd(targetTrack);
+  editor.refresh();
 }

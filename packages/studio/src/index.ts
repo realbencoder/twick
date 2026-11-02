@@ -458,6 +458,14 @@ export { CaptionsPanelContainer } from "./components/container/captions-panel-co
 // rendering NOTHING — passed that test twice. Only rendering it can tell.
 export { EyeContactProps } from "./components/properties/eye-contact-props";
 
+// Library video opens the host's range picker before it lands. Exported FOR TESTING: the panel's
+// + and double-click (useMediaPanel, which needs MediaProvider) and the Public path's order (the
+// picker on the RAW url, then the proxy, then the add) are decided here, and the app suite
+// executes them against the shipped dist (tests/unit/media-range-add-paths-dist.test.tsx).
+export { useMediaPanel } from "./hooks/use-media-panel";
+export { MediaProvider } from "./context/media-context";
+export { addPublicVideo } from "./helpers/public-video-add";
+
 /**
  * Default export: TwickStudio (full editor component)
  */

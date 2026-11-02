@@ -165,6 +165,20 @@ export type { TickInterval, TickRange } from "./helpers/ruler-ticks";
 // useEditorManager().addElement against the shipped dist (tests/unit/media-add-placement-dist.test.tsx).
 export { applyMediaRange, placeKeepingLength } from "./helpers/media-range";
 export type { PickedMediaRange } from "./helpers/media-range";
+// The host's range picker ("Choose the part to add", window.__twick_pick_media_range). The studio's
+// panel adds call pickMediaRange through this export; the drop hooks and their add bodies are
+// exported FOR TESTING: which part of a video lands, where, and in what order the picker, the
+// proxy, the upload and the add events run are decided at these call sites, and the app suite
+// executes them against the shipped dist (tests/unit/media-range-add-paths-dist.test.tsx).
+export { pickMediaRange, PICK_MEDIA_RANGE_BRIDGE } from "./helpers/media-range";
+export type { PickMediaRangeItem, MediaRangePick } from "./helpers/media-range";
+export {
+  useTimelineDrop,
+  dropMediaOnTimeline,
+  createElementFromDrop,
+} from "./hooks/use-timeline-drop";
+export { useCanvasDrop } from "./hooks/use-canvas-drop";
+export type { CanvasDropPayload } from "./hooks/use-canvas-drop";
 // SeekTrack (the ruler) is exported FOR TESTING, not for host use — mount it via VideoEditor.
 //
 // Three separate reviews of this component found the same hole: the tick DECISIONS are pure and
