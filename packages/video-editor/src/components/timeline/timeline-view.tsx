@@ -115,7 +115,8 @@ function TimelineView({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const timelineContentRef = useRef<HTMLDivElement>(null);
-  const [, setScrollLeft] = useState(0);
+  // Read by the cut preview's label (the visible part of the band); also re-renders on scroll.
+  const [scrollLeft, setScrollLeft] = useState(0);
   const pointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
 
   const [draggedTimeline, setDraggedTimeline] = useState<Track | null>(null);
@@ -715,7 +716,15 @@ function TimelineView({
         onDrop={handleDrop}
       >
         <MarqueeOverlay marquee={marquee} />
-        <CutPreviewOverlay preview={cutPreview} timeScale={timeScale} />
+        <CutPreviewOverlay
+          preview={cutPreview}
+          timeScale={timeScale}
+          visible={
+            cutPreview && containerRef.current && containerRef.current.clientWidth > 0
+              ? { from: scrollLeft + LABEL_WIDTH, to: scrollLeft + containerRef.current.clientWidth }
+              : null
+          }
+        />
         {/* Drag-to-reorder ghost: pointer-anchored clip thumbnail, DOM-positioned (see onMove). */}
         {reorderState && (
           <div
