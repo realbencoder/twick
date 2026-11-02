@@ -23,6 +23,20 @@ import { DEFAULT_TIMELINE_ZOOM_CONFIG } from "../../helpers/constants";
 export type CutButtonState = { enabled: boolean; title: string };
 
 /**
+ * Whether a focus on a delete button came from the keyboard. Chrome focuses a button on mousedown,
+ * so press, drag off and release leaves it focused, and the red preview stayed up until a click
+ * elsewhere; only a `:focus-visible` focus counts. A browser that cannot parse the selector keeps
+ * counting every focus, as before.
+ */
+const isKeyboardFocus = (el: Element): boolean => {
+  try {
+    return el.matches(":focus-visible");
+  } catch {
+    return true;
+  }
+};
+
+/**
  * Props for the PlayerControls component.
  * Defines the configuration options and callback functions for player controls.
  *
@@ -96,7 +110,10 @@ export interface PlayerControlsProps {
      * a preview only while that side can cut.
      */
     onHoverChange?: (side: "before" | "after" | null) => void;
-    /** As `onHoverChange`, for keyboard focus (tracked apart, so leaving with the mouse keeps it). */
+    /**
+     * As `onHoverChange`, for KEYBOARD focus (`:focus-visible`; a focus left by a mouse press does
+     * not count), tracked apart so leaving with the mouse keeps a keyboard-focused preview.
+     */
     onFocusChange?: (side: "before" | "after" | null) => void;
   };
   /** Current zoom level for timeline */
@@ -261,7 +278,9 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
               onClick={() => playheadCut.before.enabled && playheadCut.onDeleteBefore()}
               onPointerEnter={() => playheadCut.onHoverChange?.("before")}
               onPointerLeave={() => playheadCut.onHoverChange?.(null)}
-              onFocus={() => playheadCut.onFocusChange?.("before")}
+              onFocus={(e) => {
+                if (isKeyboardFocus(e.currentTarget)) playheadCut.onFocusChange?.("before");
+              }}
               onBlur={() => playheadCut.onFocusChange?.(null)}
               disabled={!playheadCut.before.enabled}
               title={playheadCut.before.title}
@@ -275,7 +294,9 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
               onClick={() => playheadCut.after.enabled && playheadCut.onDeleteAfter()}
               onPointerEnter={() => playheadCut.onHoverChange?.("after")}
               onPointerLeave={() => playheadCut.onHoverChange?.(null)}
-              onFocus={() => playheadCut.onFocusChange?.("after")}
+              onFocus={(e) => {
+                if (isKeyboardFocus(e.currentTarget)) playheadCut.onFocusChange?.("after");
+              }}
               onBlur={() => playheadCut.onFocusChange?.(null)}
               disabled={!playheadCut.after.enabled}
               title={playheadCut.after.title}

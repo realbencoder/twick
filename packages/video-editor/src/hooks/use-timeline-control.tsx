@@ -300,7 +300,8 @@ const useTimelineControl = () => {
    * before that commit leaves the timeline as it was. Ignored while another cut at the playhead is
    * still finishing (cutInFlightRef).
    *
-   * A cut that worked then fires PLAYHEAD_CUT_DONE_EVENT (announceCutDone) with what it removed.
+   * A cut that worked then fires PLAYHEAD_CUT_DONE_EVENT (announceCutDone) with what it removed,
+   * even when the seek or the pause after it throws (logged; the cut is already committed).
    */
   const deleteAtPlayhead = async (
     side: "before" | "after",
@@ -319,12 +320,18 @@ const useTimelineControl = () => {
         console.error("[Timeline] delete at the playhead failed", { side, t, error });
         return refuse(action, "split-failed");
       }
-      if (range.seekTo !== null) {
-        const controller = hostPlayerController();
-        if (controller && typeof controller.seek === "function") controller.seek(range.seekTo);
-        else fallbackSeek?.(range.seekTo);
+      // The cut is committed from here on, so it is announced whatever happens next: a seek or a
+      // pause that throws is logged (rule #26), and the creator still gets the Undo message.
+      try {
+        if (range.seekTo !== null) {
+          const controller = hostPlayerController();
+          if (controller && typeof controller.seek === "function") controller.seek(range.seekTo);
+          else fallbackSeek?.(range.seekTo);
+        }
+        pauseAfterCut();
+      } catch (error) {
+        console.error("[Timeline] after a delete at the playhead, the seek or pause failed", { side, t, error });
       }
-      pauseAfterCut();
       announceCutDone(side === "before" ? "delete-before" : "delete-after", range.to - range.from);
       return true;
     } finally {
