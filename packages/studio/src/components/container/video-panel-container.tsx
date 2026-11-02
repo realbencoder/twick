@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { PanelProps } from "../../types";
 import { VideoPanel } from "../panel/video-panel";
 import { useMediaPanel } from "../../hooks/use-media-panel";
@@ -8,7 +8,7 @@ import SearchInput from "../shared/search-input";
 import type { AssetProviderConfig, MediaItem } from "@twick/video-editor";
 import { throttle } from "@twick/video-editor";
 import { getAssetLibrary } from "../../helpers/asset-library";
-import { addPublicVideo } from "../../helpers/public-video-add";
+import { usePublicVideoAdd } from "../../hooks/use-public-video-add";
 
 export function VideoPanelContainer(props: PanelProps) {
   const [activeSource, setActiveSource] = useState<"user" | "public">("user");
@@ -137,46 +137,12 @@ function VideoPublicAssetsSection(props: PanelProps) {
     },
     props.videoResolution,
   );
-  const [proxyingId, setProxyingId] = useState<string | null>(null);
-  // Ref mirror for the re-entrancy guard (house rule #9): a useState-only guard has a stale-
-  // closure window between click 1's setState and React's commit — two near-simultaneous clicks
-  // could both pass. The ref is set synchronously, so the second caller always sees it.
-  const proxyingRef = useRef(false);
-
-  // Public video: the host's range picker opens on the RAW url first, then the proxy copies the
-  // asset into our S3 (only after Add), then the picked part lands (addPublicVideo).
-  const handlePublicSelection = async (item: MediaItem, forceAdd?: boolean) => {
-    // Re-entrancy guard, held across the WHOLE add (picker, proxy and add): without it every extra
-    // click while the picker is open or the proxy runs queued another identical add (audit
-    // finding #2 — duplicate B-roll stacks).
-    if (proxyingRef.current) return;
-    proxyingRef.current = true;
-    try {
-      await addPublicVideo(item, {
-        proxy: async (rawUrl) => {
-          const headers: Record<string, string> = { "Content-Type": "application/json" };
-          if (props.uploadConfig?.headers) Object.assign(headers, props.uploadConfig.headers);
-          const res = await fetch("/api/assets/proxy", {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ url: rawUrl, type: "video", name: `pexels-${item.id}.mp4` }),
-          });
-          if (!res.ok) {
-            console.error(`[twick] the Public video proxy answered ${res.status}`);
-            return null;
-          }
-          const data = await res.json();
-          return typeof data?.url === "string" && data.url ? data.url : null;
-        },
-        add: (proxied, pick) => handleSelection(proxied, forceAdd, pick),
-        // The tile's spinner starts with the proxy, never behind the picker.
-        onProxyStart: () => setProxyingId(item.id),
-      });
-    } finally {
-      setProxyingId(null);
-      proxyingRef.current = false;
-    }
-  };
+  // The picker on the RAW url, then the proxy (only after Add), then the picked part lands; the
+  // tile's spinner and the re-entrancy guard live in the hook (hooks/use-public-video-add.ts).
+  const { proxyingId, handlePublicSelection } = usePublicVideoAdd({
+    handleSelection,
+    headers: props.uploadConfig?.headers,
+  });
 
   const assetLibrary = getAssetLibrary();
   const [providerConfigs, setProviderConfigs] = useState<AssetProviderConfig[]>(

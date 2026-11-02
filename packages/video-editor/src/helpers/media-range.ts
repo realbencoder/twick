@@ -47,14 +47,11 @@ const isPickedRange = (r: unknown): r is PickedMediaRange => {
  * the creator sees the toast instead of a click that did nothing (rule #26).
  */
 export async function pickMediaRange(item: PickMediaRangeItem): Promise<MediaRangePick> {
-  const bridge =
-    typeof window === "undefined"
-      ? undefined
-      : (window as unknown as Record<string, unknown>)[PICK_MEDIA_RANGE_BRIDGE];
-  if (typeof bridge !== "function") return { kind: "whole" };
+  const bridge = pickerBridge();
+  if (!bridge) return { kind: "whole" };
   const request: PickMediaRangeItem = item.name ? { url: item.url, name: item.name } : { url: item.url };
   try {
-    const answer: unknown = await (bridge as (i: PickMediaRangeItem) => Promise<unknown>)(request);
+    const answer: unknown = await bridge(request);
     if (answer === null) return { kind: "cancel" };
     if (isPickedRange(answer)) return { kind: "range", inSec: answer.inSec, outSec: answer.outSec };
     console.error("[twick] the range picker answered something that is not a range; adding nothing", answer);
@@ -63,6 +60,17 @@ export async function pickMediaRange(item: PickMediaRangeItem): Promise<MediaRan
   }
   window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
   return { kind: "cancel" };
+}
+
+const pickerBridge = (): ((i: PickMediaRangeItem) => Promise<unknown>) | null => {
+  if (typeof window === "undefined") return null;
+  const bridge = (window as unknown as Record<string, unknown>)[PICK_MEDIA_RANGE_BRIDGE];
+  return typeof bridge === "function" ? (bridge as (i: PickMediaRangeItem) => Promise<unknown>) : null;
+};
+
+/** Whether `pickMediaRange` will open the host's picker (false: it answers `whole` at once). */
+export function hasMediaRangePicker(): boolean {
+  return pickerBridge() !== null;
 }
 
 /** The range to build with, or undefined for the whole clip. Call only on a pick that adds. */

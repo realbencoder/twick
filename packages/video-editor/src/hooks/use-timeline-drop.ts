@@ -16,6 +16,7 @@ import { TIMELINE_DROP_MEDIA_TYPE } from "../helpers/constants";
 import { createTimeScale } from "../helpers/time-scale";
 import {
   applyMediaRange,
+  hasMediaRangePicker,
   pickMediaRange,
   placeKeepingLength,
   rangeOfPick,
@@ -306,17 +307,19 @@ export function parsePanelDrop(
 
 /**
  * Adds an OS-dropped file once `uploadDroppedFile` has put it on the CDN. A video is a library add
- * with extra steps: the upload's toast settles FIRST ('done'), so it never spins behind the
- * picker, then the picker opens with the file's real name. A cancel, or a file the picker can't
- * play (an iPhone HEVC .MOV), adds nothing; the upload stays a library row by design. Any other
- * type adds as before and settles after the add. A failed add is logged and surfaced.
+ * with extra steps: when the host has a picker, the upload's toast settles FIRST ('done'), so it
+ * never spins behind the picker, then the picker opens with the file's real name. A cancel, or a
+ * file the picker can't play (an iPhone HEVC .MOV), adds nothing; the upload stays a library row
+ * by design. With no picker, and for any other type, the add runs as before and settles after the
+ * add. A failed add is logged and surfaced.
  */
 export async function addDroppedUpload(
   file: { type: DroppableAssetType; url: string; name: string },
   add: (range: PickedMediaRange | undefined) => Promise<void>
 ): Promise<void> {
   let range: PickedMediaRange | undefined;
-  if (file.type === "video") {
+  const picks = file.type === "video" && hasMediaRangePicker();
+  if (picks) {
     window.dispatchEvent(new CustomEvent("twick-media-add-done"));
     const pick = await pickMediaRange({ url: file.url, name: file.name });
     if (pick.kind === "cancel") return;
@@ -324,7 +327,7 @@ export async function addDroppedUpload(
   }
   try {
     await add(range);
-    if (file.type !== "video") window.dispatchEvent(new CustomEvent("twick-media-add-done"));
+    if (!picks) window.dispatchEvent(new CustomEvent("twick-media-add-done"));
   } catch (err) {
     console.error("[twick] adding the dropped file failed", err);
     window.dispatchEvent(new CustomEvent("twick-media-add-failed"));

@@ -36,6 +36,27 @@ export const useEditorManager = () => {
   const { getCurrentTime } = useLivePlayerContext();
 
   /**
+   * An add that failed is never silent (rule #26): it is logged and fires `twick-media-add-failed`
+   * (the host's "Couldn't add that clip" toast). The empty track this add created for it is taken
+   * away again, if it is still empty. That removal is a snapshot of its own: the add's `addTrack`
+   * already wrote one (the history keeps no way to drop it safely, since another gesture may have
+   * committed during the probe), so one undo after a failed add shows the empty track and a second
+   * undo is back where the creator started. Never rejects: other panels call addElement unawaited.
+   */
+  const failAdd = (err: unknown, emptyTrack: Track | null) => {
+    console.error("[twick] adding the element failed", err);
+    if (emptyTrack) {
+      try {
+        const live = editor.getTrackById(emptyTrack.getId());
+        if (live && live.getElements().length === 0) editor.removeTrackById(emptyTrack.getId());
+      } catch (cleanupErr) {
+        console.error("[twick] removing the empty track of a failed add failed", cleanupErr);
+      }
+    }
+    window.dispatchEvent(new CustomEvent("twick-media-add-failed"));
+  };
+
+  /**
    * Adds a new element to the timeline at the current playback time.
    * Automatically handles track selection, collision detection, and error recovery.
    * Creates a new track if no track is selected or if collision errors occur.
@@ -74,6 +95,9 @@ export const useEditorManager = () => {
       element.setEnd(mainVideoEnd);
     }
 
+    // The track this add creates for the element, so a failed add can take it away again (never a
+    // track the creator made or selected).
+    let createdTrack: Track | null = null;
     try {
       if (selectedItem instanceof Track) {
         const result = await editor.addElementToTrack(selectedItem, element);
@@ -87,28 +111,35 @@ export const useEditorManager = () => {
         // This ensures new elements always appear on top in the z-order.
         const captionTrackIdx = tracks2.findIndex((t2: any) => t2.getType() === TRACK_TYPES.CAPTION);
         const insertIdx = captionTrackIdx >= 0 ? captionTrackIdx + 1 : 0;
-        const newTrack = editor.addTrack(`Track_${Date.now()}`, undefined, insertIdx);
-        const result = await editor.addElementToTrack(newTrack, element);
+        createdTrack = editor.addTrack(`Track_${Date.now()}`, undefined, insertIdx);
+        const result = await editor.addElementToTrack(createdTrack, element);
         if (result) {
           setSelectedItem(element);
         }
       }
     } catch (error) {
-      if (error instanceof ValidationError) {
-        if (error.errors.includes(VALIDATION_ERROR_CODE.COLLISION_ERROR)) {
-          try {
-            const tracks2 = editor.getTimelineData()?.tracks || [];
-            const captionTrackIdx2 = tracks2.findIndex((t2: any) => t2.getType() === TRACK_TYPES.CAPTION);
-            const insertIdx = captionTrackIdx2 >= 0 ? captionTrackIdx2 + 1 : 0;
-            const newTrack = editor.addTrack(`Track_${Date.now()}`, undefined, insertIdx);
-            const result = await editor.addElementToTrack(newTrack, element);
-            if (result) {
-              setSelectedItem(element);
-            }
-          } catch (innerErr) {
-            console.error('Failed to add element to new track:', innerErr);
+      if (
+        error instanceof ValidationError &&
+        error.errors?.includes(VALIDATION_ERROR_CODE.COLLISION_ERROR)
+      ) {
+        let retryTrack: Track | null = null;
+        try {
+          const tracks2 = editor.getTimelineData()?.tracks || [];
+          const captionTrackIdx2 = tracks2.findIndex((t2: any) => t2.getType() === TRACK_TYPES.CAPTION);
+          const insertIdx = captionTrackIdx2 >= 0 ? captionTrackIdx2 + 1 : 0;
+          retryTrack = editor.addTrack(`Track_${Date.now()}`, undefined, insertIdx);
+          const result = await editor.addElementToTrack(retryTrack, element);
+          if (result) {
+            setSelectedItem(element);
           }
+        } catch (innerErr) {
+          failAdd(innerErr, retryTrack);
         }
+      } else {
+        // Anything but a collision: a probe that failed (a file that no longer loads, the proxied
+        // copy of a Public clip), a validation refusal. It used to vanish here, with no log, no
+        // toast and an empty track left behind.
+        failAdd(error, createdTrack);
       }
     }
   };

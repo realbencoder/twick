@@ -465,6 +465,8 @@ export { EyeContactProps } from "./components/properties/eye-contact-props";
 export { useMediaPanel } from "./hooks/use-media-panel";
 export { MediaProvider } from "./context/media-context";
 export { addPublicVideo } from "./helpers/public-video-add";
+// The Public tab's wiring (spinner, re-entrancy guard, the pick handed to handleSelection).
+export { usePublicVideoAdd } from "./hooks/use-public-video-add";
 
 /**
  * Default export: TwickStudio (full editor component)
