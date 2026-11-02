@@ -12,8 +12,9 @@ import {
   resolveDeleteRange,
   playheadCutMessage,
   PLAYHEAD_CUT_REFUSED_EVENT,
+  PLAYHEAD_CUT_DONE_EVENT,
 } from "../helpers/playhead-cut";
-import type { PlayheadCutAction, PlayheadCutRefusal } from "../helpers/playhead-cut";
+import type { PlayheadCutAction, PlayheadCutRefusal, PlayheadCutDoneDetail } from "../helpers/playhead-cut";
 
 /** Force-pause all media after a split, so a cut while playing does not leak audio. */
 const pauseAllMediaSoon = () => {
@@ -60,6 +61,18 @@ const refuse = (action: PlayheadCutAction, reason: PlayheadCutRefusal): false =>
     );
   }
   return false;
+};
+
+/**
+ * A delete at the playhead that worked says what it removed: PLAYHEAD_CUT_DONE_EVENT on window with
+ * `{ action, seconds }`, so the host can show "Deleted 3.0 s after the playhead" with Undo (Ben,
+ * 2026-11-02, after an accidental W took his only subtitle and nothing said so). Called only after
+ * the cut is committed, the playhead moved and playback paused, never for a refusal or a failure.
+ */
+const announceCutDone = (action: PlayheadCutDoneDetail["action"], seconds: number): void => {
+  if (typeof window === "undefined") return;
+  const detail: PlayheadCutDoneDetail = { action, seconds };
+  window.dispatchEvent(new CustomEvent(PLAYHEAD_CUT_DONE_EVENT, { detail }));
 };
 
 /**
@@ -286,6 +299,8 @@ const useTimelineControl = () => {
    * which is also logged: rippleDeleteRanges cuts a clone and commits once at its end, so a throw
    * before that commit leaves the timeline as it was. Ignored while another cut at the playhead is
    * still finishing (cutInFlightRef).
+   *
+   * A cut that worked then fires PLAYHEAD_CUT_DONE_EVENT (announceCutDone) with what it removed.
    */
   const deleteAtPlayhead = async (
     side: "before" | "after",
@@ -310,6 +325,7 @@ const useTimelineControl = () => {
         else fallbackSeek?.(range.seekTo);
       }
       pauseAfterCut();
+      announceCutDone(side === "before" ? "delete-before" : "delete-after", range.to - range.from);
       return true;
     } finally {
       cutInFlightRef.current = false;

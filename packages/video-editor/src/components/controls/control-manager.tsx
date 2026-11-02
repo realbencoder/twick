@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useLivePlayerContext, useLivePlayerTime } from "@twick/live-player";
 import PlayerControls, { PlayerControlsProps } from "./player-controls";
 import { useTimelineContext } from "@twick/timeline";
@@ -11,6 +12,7 @@ import {
   resolveDeleteRange,
   playheadCutMessage,
 } from "../../helpers/playhead-cut";
+import { setCutPreview } from "../../helpers/cut-preview";
 
 const ControlManager = ({
   trackZoom,
@@ -30,6 +32,7 @@ const ControlManager = ({
   const currentTime = useLivePlayerTime();
   const { togglePlayback } = usePlayerControl(skipRefreshCycle);
   const {
+    contextId,
     editor,
     canRedo,
     canUndo,
@@ -71,13 +74,25 @@ const ControlManager = ({
     const t = typeof controller?.getCurrentTimeSec === "function" ? controller.getCurrentTimeSec() : undefined;
     return typeof t === "number" && Number.isFinite(t) ? t : getCurrentTime();
   };
+  // The red timeline preview (Ben, 2026-11-02): which delete button the pointer is over, and which
+  // has keyboard focus, tracked apart. A Q or W press (key or button) clears both: the cut consumed
+  // the preview, and it comes back only on a new hover or focus.
+  const [hoveredSide, setHoveredSide] = useState<"before" | "after" | null>(null);
+  const [focusedSide, setFocusedSide] = useState<"before" | "after" | null>(null);
+  const clearPreview = () => {
+    setHoveredSide(null);
+    setFocusedSide(null);
+  };
+
   const splitNow = () => {
     void splitAtPlayhead(pressTime());
   };
   const deleteBeforeNow = () => {
+    clearPreview();
     void deleteAtPlayhead("before", pressTime(), handleSeek);
   };
   const deleteAfterNow = () => {
+    clearPreview();
     void deleteAtPlayhead("after", pressTime(), handleSeek);
   };
 
@@ -106,16 +121,34 @@ const ControlManager = ({
         : { enabled: false, title: playheadCutMessage("split", splitTarget.reason) },
     before:
       beforeRange.kind === "cut"
-        ? { enabled: true, title: "Delete before the playhead (Q)" }
+        ? { enabled: true, title: "Delete the part before the playhead (Q)" }
         : { enabled: false, title: playheadCutMessage("delete-before", beforeRange.reason) },
     after:
       afterRange.kind === "cut"
-        ? { enabled: true, title: "Delete after the playhead (W)" }
+        ? { enabled: true, title: "Delete the part after the playhead (W)" }
         : { enabled: false, title: playheadCutMessage("delete-after", afterRange.reason) },
     onSplit: splitNow,
     onDeleteBefore: deleteBeforeNow,
     onDeleteAfter: deleteAfterNow,
+    onHoverChange: setHoveredSide,
+    onFocusChange: setFocusedSide,
   };
+
+  // The preview is exactly the range the press would cut, from the same resolveDeleteRange the
+  // button's enabled state uses, at this render's playhead (so it follows the playhead while
+  // hovered). Only while that side CAN cut: a disabled button (or one that just became disabled
+  // under a resting pointer) shows nothing. The timeline view draws it (useCutPreview); this is the
+  // store's only writer, and it clears it on unmount.
+  const previewSide = hoveredSide ?? focusedSide;
+  const previewRange = previewSide === "before" ? beforeRange : previewSide === "after" ? afterRange : null;
+  const preview =
+    previewSide && previewRange?.kind === "cut"
+      ? { side: previewSide, from: previewRange.from, to: previewRange.to }
+      : null;
+  useEffect(() => {
+    setCutPreview(contextId, preview);
+  });
+  useEffect(() => () => setCutPreview(contextId, null), [contextId]);
 
   return (
     <div className="twick-editor-timeline-controls">

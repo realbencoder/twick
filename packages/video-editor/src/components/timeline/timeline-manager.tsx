@@ -10,6 +10,7 @@ import { TimelineTickConfig } from "../video-editor";
 import { ElementColors } from "../../helpers/types";
 import { PlayheadState } from "../track/seek-track";
 import { dropMediaOnTimeline } from "../../hooks/use-timeline-drop";
+import { useCutPreview } from "../../helpers/cut-preview";
 
 const TimelineManager = ({
   trackZoom,
@@ -22,8 +23,10 @@ const TimelineManager = ({
 }) => {
   const { playerState } = useLivePlayerContext();
   const currentTime = useLivePlayerTime();
-  const { followPlayheadEnabled, editor, videoResolution, setSelectedItem } =
+  const { contextId, followPlayheadEnabled, editor, videoResolution, setSelectedItem } =
     useTimelineContext();
+  // The red delete before / after preview ControlManager sets while a delete button is hovered.
+  const cutPreview = useCutPreview(contextId);
   const {
     timelineData,
     totalDuration,
@@ -87,6 +90,7 @@ const TimelineManager = ({
       onDropOnTimeline={handleDropOnTimeline}
       videoResolution={videoResolution}
       enableDropOnTimeline={true}
+      cutPreview={cutPreview}
       seekTrack={
         <SeekControl
           duration={totalDuration}

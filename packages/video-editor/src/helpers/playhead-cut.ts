@@ -33,6 +33,15 @@ export type DeleteRange =
 /** Fired on window by the editor when a cut is refused, so the host app can show the message. */
 export const PLAYHEAD_CUT_REFUSED_EVENT = "twick-playhead-cut-refused";
 
+/**
+ * Fired on window by the editor after a SUCCESSFUL delete before / after the playhead (Q, W or
+ * their buttons), with `{ action: "delete-before" | "delete-after", seconds }` (`seconds` is the
+ * length removed, `to - from`), so the host app can say what went and offer Undo. Never fired for a
+ * refusal, an engine failure, an ignored press or a split.
+ */
+export const PLAYHEAD_CUT_DONE_EVENT = "twick-playhead-cut-done";
+export type PlayheadCutDoneDetail = { action: "delete-before" | "delete-after"; seconds: number };
+
 const isTrackLocked = (track: Track | undefined | null): boolean =>
   (track?.getProps() as { locked?: boolean } | undefined)?.locked === true;
 

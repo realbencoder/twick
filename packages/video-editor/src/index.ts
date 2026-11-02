@@ -137,13 +137,16 @@ export {
   resolveDeleteRange,
   playheadCutMessage,
   PLAYHEAD_CUT_REFUSED_EVENT,
+  PLAYHEAD_CUT_DONE_EVENT,
 } from "./helpers/playhead-cut";
 export type {
   PlayheadCutAction,
   PlayheadCutRefusal,
+  PlayheadCutDoneDetail,
   SplitTarget,
   DeleteRange,
 } from "./helpers/playhead-cut";
+export type { CutPreview } from "./helpers/cut-preview";
 // Ruler tick decisions. Exported for the same reason as the strip-window helpers above: so the app
 // suite can EXECUTE the shipped arithmetic. Grep-only marker tests let nine silent reverts through
 // on an earlier change in this package.

@@ -10,6 +10,8 @@ import { useMarqueeSelection } from "../../hooks/use-marquee-selection";
 import { useTimelineDrop } from "../../hooks/use-timeline-drop";
 import { useEdgeAutoScroll } from "../../hooks/use-edge-auto-scroll";
 import { MarqueeOverlay } from "./marquee-overlay";
+import { CutPreviewOverlay } from "./cut-preview-overlay";
+import type { CutPreview } from "../../helpers/cut-preview";
 import { getTrackOrSeparatorAt, type DropTarget } from "../../utils/drop-target";
 import { useTimeScale, createTimeScale, LABEL_WIDTH, SEPARATOR_HEIGHT } from "../../helpers/time-scale";
 import { getSnapTargets as computeSnapTargets } from "../../helpers/snap-targets";
@@ -49,6 +51,7 @@ function TimelineView({
   videoResolution,
   enableDropOnTimeline = true,
   chapters = [],
+  cutPreview = null,
 }: {
   zoomLevel: number;
   duration: number;
@@ -107,6 +110,8 @@ function TimelineView({
   /** Whether to enable drop-on-timeline */
   enableDropOnTimeline?: boolean;
   chapters?: ChapterMarker[];
+  /** The red delete before / after preview to draw over every track, or null (helpers/cut-preview.ts). */
+  cutPreview?: CutPreview | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const timelineContentRef = useRef<HTMLDivElement>(null);
@@ -710,6 +715,7 @@ function TimelineView({
         onDrop={handleDrop}
       >
         <MarqueeOverlay marquee={marquee} />
+        <CutPreviewOverlay preview={cutPreview} timeScale={timeScale} />
         {/* Drag-to-reorder ghost: pointer-anchored clip thumbnail, DOM-positioned (see onMove). */}
         {reorderState && (
           <div

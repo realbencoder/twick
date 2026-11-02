@@ -4,8 +4,6 @@ import "../../styles/player-controls.css";
 import {
   Trash2,
   Scissors,
-  ArrowLeftToLine,
-  ArrowRightToLine,
   Play,
   Pause,
   Loader2,
@@ -16,6 +14,7 @@ import {
   Crosshair,
 } from "lucide-react";
 import { UndoRedoControls } from "./undo-redo-controls";
+import { CutSideIcon } from "./cut-side-icon";
 import { TrackElement, Track, formatTimeTenths, canSplitElement } from "@twick/timeline";
 import { TimelineZoomConfig } from "../video-editor";
 import { DEFAULT_TIMELINE_ZOOM_CONFIG } from "../../helpers/constants";
@@ -91,6 +90,14 @@ export interface PlayerControlsProps {
     onSplit: () => void;
     onDeleteBefore: () => void;
     onDeleteAfter: () => void;
+    /**
+     * The red timeline preview (Ben, 2026-11-02): called with the side whose button the pointer is
+     * over, and null when it leaves. Reported whether or not the button is enabled; the host shows
+     * a preview only while that side can cut.
+     */
+    onHoverChange?: (side: "before" | "after" | null) => void;
+    /** As `onHoverChange`, for keyboard focus (tracked apart, so leaving with the mouse keeps it). */
+    onFocusChange?: (side: "before" | "after" | null) => void;
   };
   /** Current zoom level for timeline */
   zoomLevel?: number;
@@ -252,26 +259,38 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
           <>
             <button
               onClick={() => playheadCut.before.enabled && playheadCut.onDeleteBefore()}
+              onPointerEnter={() => playheadCut.onHoverChange?.("before")}
+              onPointerLeave={() => playheadCut.onHoverChange?.(null)}
+              onFocus={() => playheadCut.onFocusChange?.("before")}
+              onBlur={() => playheadCut.onFocusChange?.(null)}
               disabled={!playheadCut.before.enabled}
               title={playheadCut.before.title}
               className={`control-btn delete-before-btn ${
                 !playheadCut.before.enabled ? "btn-disabled" : ""
               }`}
             >
-              <ArrowLeftToLine className="icon-md" />
+              <CutSideIcon side="before" className="icon-md" />
             </button>
             <button
               onClick={() => playheadCut.after.enabled && playheadCut.onDeleteAfter()}
+              onPointerEnter={() => playheadCut.onHoverChange?.("after")}
+              onPointerLeave={() => playheadCut.onHoverChange?.(null)}
+              onFocus={() => playheadCut.onFocusChange?.("after")}
+              onBlur={() => playheadCut.onFocusChange?.(null)}
               disabled={!playheadCut.after.enabled}
               title={playheadCut.after.title}
               className={`control-btn delete-after-btn ${
                 !playheadCut.after.enabled ? "btn-disabled" : ""
               }`}
             >
-              <ArrowRightToLine className="icon-md" />
+              <CutSideIcon side="after" className="icon-md" />
             </button>
           </>
         )}
+
+        {/* Sets the cut group (Scissors, delete before, delete after) apart from Undo / Redo, so a
+            cut is not one slip away from Undo (Ben, 2026-11-02). Its look is the host's CSS. */}
+        <span className="twick-cut-divider" aria-hidden="true" />
 
         <UndoRedoControls
           canUndo={canUndo}
