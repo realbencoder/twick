@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 /**
  * Keys the editor never reads: one a focused control already handled (`defaultPrevented`), or one
@@ -162,6 +162,7 @@ function isDeleteForTextPanel(lastPress: LastPress): boolean {
  * landed there, and never once the last pointerdown landed outside both (see isDeleteForTextPanel;
  * a capture-phase pointerdown listener on document records where the last one landed, and a press
  * on a disabled control does not count). S, Q and W keep working in the panels.
+ * A key calls the handlers of the last COMMITTED render, read when it is pressed (handlersRef).
  */
 export function useCanvasKeyboard({
   onDelete,
@@ -184,6 +185,17 @@ export function useCanvasKeyboard({
   // or elsewhere. A ref: it is read only inside the keydown handler and must never re-render the host.
   const lastPressRef = useRef<LastPress>(null);
 
+  // The handlers a key calls, from the last committed render. The listeners below are bound once
+  // (per `enabled`) and read this at press time, so a key never reaches an older render's closure.
+  // Set in a LAYOUT effect: a render whose state came from a promise (a split selecting its right
+  // piece) gets its passive effects in a later scheduler task, and a key the browser handed out in
+  // between used to act on the selection from before (S cut the main video instead of refusing, and
+  // Delete deleted nothing). Layout effects run in the same task as the commit.
+  const handlersRef = useRef({ onDelete, onUndo, onRedo, onSplit, onDeleteBefore, onDeleteAfter });
+  useLayoutEffect(() => {
+    handlersRef.current = { onDelete, onUndo, onRedo, onSplit, onDeleteBefore, onDeleteAfter };
+  });
+
   useEffect(() => {
     if (!enabled) return;
 
@@ -196,9 +208,10 @@ export function useCanvasKeyboard({
     };
 
     const runCut = (cut: CutKey) => {
-      if (cut === "split") onSplit?.();
-      else if (cut === "delete-before") onDeleteBefore?.();
-      else onDeleteAfter?.();
+      const handlers = handlersRef.current;
+      if (cut === "split") handlers.onSplit?.();
+      else if (cut === "delete-before") handlers.onDeleteBefore?.();
+      else handlers.onDeleteAfter?.();
     };
 
     // Capture phase: a cut key on a CLOSED dropdown is claimed before the dropdown's own
@@ -224,14 +237,14 @@ export function useCanvasKeyboard({
         // Undo: Cmd/Ctrl+Z (without Shift)
         if (key === "z" && !e.shiftKey) {
           e.preventDefault();
-          onUndo?.();
+          handlersRef.current.onUndo?.();
           return;
         }
 
         // Redo: Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y
         if (key === "y" || (key === "z" && e.shiftKey)) {
           e.preventDefault();
-          onRedo?.();
+          handlersRef.current.onRedo?.();
           return;
         }
       }
@@ -255,7 +268,7 @@ export function useCanvasKeyboard({
       if (!hasPrimaryModifier && (key === "delete" || key === "backspace")) {
         if (isDeleteForTextPanel(lastPressRef.current)) return;
         e.preventDefault();
-        onDelete?.();
+        handlersRef.current.onDelete?.();
       }
     };
 
@@ -267,5 +280,5 @@ export function useCanvasKeyboard({
       document.removeEventListener("keydown", handleKeyDownCapture, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [enabled, onDelete, onUndo, onRedo, onSplit, onDeleteBefore, onDeleteAfter]);
+  }, [enabled]);
 }
