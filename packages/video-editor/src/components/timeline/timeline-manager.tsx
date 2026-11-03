@@ -39,7 +39,7 @@ const TimelineManager = ({
     onMainPinSettle,
     onSeek,
   } = useTimelineManager();
-  const { selectedIds } = useTimelineContext();
+  const { selectedIds, changeLog } = useTimelineContext();
   const { handleItemSelect, handleEmptyClick, handleMarqueeSelect } =
     useTimelineSelection();
 
@@ -91,6 +91,7 @@ const TimelineManager = ({
       videoResolution={videoResolution}
       enableDropOnTimeline={true}
       cutPreview={cutPreview}
+      changeLog={changeLog}
       seekTrack={
         <SeekControl
           duration={totalDuration}

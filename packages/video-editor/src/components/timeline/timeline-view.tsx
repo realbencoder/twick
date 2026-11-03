@@ -52,6 +52,7 @@ function TimelineView({
   enableDropOnTimeline = true,
   chapters = [],
   cutPreview = null,
+  changeLog = 0,
 }: {
   zoomLevel: number;
   duration: number;
@@ -112,6 +113,12 @@ function TimelineView({
   chapters?: ChapterMarker[];
   /** The red delete before / after preview to draw over every track, or null (helpers/cut-preview.ts). */
   cutPreview?: CutPreview | null;
+  /**
+   * The timeline context's change counter. It moves on every data change (every commit, refresh,
+   * undo and redo) and never on a playhead tick; each TrackBase takes it so a track the engine
+   * changed IN PLACE (a split keeps the same Track objects and the same tracks array) is redrawn.
+   */
+  changeLog?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const timelineContentRef = useRef<HTMLDivElement>(null);
@@ -849,6 +856,7 @@ function TimelineView({
                   onReorderStateChange={handleReorderStateChange}
                   elementColors={elementColors}
                   getSnapTargets={getSnapTargets}
+                  changeLog={changeLog}
                 />
               </div>
               <div

@@ -31,12 +31,20 @@ interface TrackBaseProps {
   getSnapTargets?: (excludeElementId: string) => number[];
   /** Reorder lift/settle notifications, threaded to each TrackElementView (visuals in timeline-view). */
   onReorderStateChange?: (active: boolean, element?: TrackElement, thumbUrl?: string | null) => void;
+  /**
+   * The timeline's change counter (timeline-view). Read by nothing here: it is in the props only so
+   * memo() re-renders this track on every data change. The engine mutates tracks IN PLACE and a
+   * split commits the same Track object, so without it a split with nothing selected changed no
+   * prop and stayed undrawn until the next zoom or click (Ben, 2026-11-03).
+   */
+  changeLog?: number;
 }
 
 // Memoized: clips/tracks are logically INDEPENDENT of the playhead tick (nothing here reads
 // currentTime; the playhead is a single overlay in seek-track, not per-track). With stable props
 // from timeline-view (onItemSelection/onDragStateChange are useCallback'd), default shallow compare
 // skips the ~20×/sec playback re-renders that used to cascade through every track + clip.
+// `changeLog` is the one prop that moves on a data change, so commits still redraw.
 const TrackBase = memo(({
   duration,
   zoom,
